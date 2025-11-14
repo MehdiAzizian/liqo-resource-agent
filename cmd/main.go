@@ -35,8 +35,8 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	rearv1alpha1 "github.com/mehdiazizian/tesi2-ra/api/v1alpha1"
-	"github.com/mehdiazizian/tesi2-ra/internal/controller"
+	rearv1alpha1 "github.com/mehdiazizian/liqo-resource-agent/api/v1alpha1"
+	"github.com/mehdiazizian/liqo-resource-agent/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
 

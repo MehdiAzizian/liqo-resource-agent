@@ -26,8 +26,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	rearv1alpha1 "github.com/mehdiazizian/tesi2-ra/api/v1alpha1"
-	"github.com/mehdiazizian/tesi2-ra/internal/metrics"
+	rearv1alpha1 "github.com/mehdiazizian/liqo-resource-agent/api/v1alpha1"
+	"github.com/mehdiazizian/liqo-resource-agent/internal/metrics"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 

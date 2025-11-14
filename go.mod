@@ -1,4 +1,4 @@
-module github.com/mehdiazizian/tesi2-ra
+module github.com/mehdiazizian/liqo-resource-agent
 
 go 1.24.5
 

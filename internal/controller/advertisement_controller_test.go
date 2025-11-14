@@ -27,7 +27,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	rearv1alpha1 "github.com/mehdiazizian/tesi2-ra/api/v1alpha1"
+	rearv1alpha1 "github.com/mehdiazizian/liqo-resource-agent/api/v1alpha1"
 )
 
 var _ = Describe("Advertisement Controller", func() {

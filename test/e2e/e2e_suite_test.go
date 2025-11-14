@@ -28,7 +28,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/mehdiazizian/tesi2-ra/test/utils"
+	"github.com/mehdiazizian/liqo-resource-agent/test/utils"
 )
 
 var (

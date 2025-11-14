@@ -8,7 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	rearv1alpha1 "github.com/mehdiazizian/tesi2-ra/api/v1alpha1"
+	rearv1alpha1 "github.com/mehdiazizian/liqo-resource-agent/api/v1alpha1"
 )
 
 // Collector collects resource metrics from the cluster
