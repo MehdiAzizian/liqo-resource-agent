@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- rear_v1alpha1_advertisement.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

@@ -1,0 +1,11 @@
+apiVersion: rear.fluidos.eu/v1alpha1
+kind: Advertisement
+metadata:
+  name: cluster-advertisement
+  namespace: default
+spec:
+  clusterID: "will-be-auto-filled"
+  timestamp: "2025-01-01T00:00:00Z"
+  resources:
+    cpu: "0"
+    memory: "0"
