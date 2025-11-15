@@ -39,14 +39,22 @@ Kubernetes controller that automatically advertises cluster resources for the FL
 
 ## What It Does
 
-The Resource Agent continuously monitors your Kubernetes cluster and maintains an up-to-date Advertisement of available resources:
+The Resource Agent **watches** your Kubernetes cluster and immediately reacts to changes, maintaining an up-to-date Advertisement of available resources:
 
-- **Capacity**: Total hardware resources
-- **Allocatable**: Resources available to pods
-- **Allocated**: Resources requested by running pods  
-- **Available**: Resources still free for scheduling
+- **Event-Driven**: Responds instantly when pods are created/deleted or nodes change
+- **Automatic Updates**: No manual intervention needed
+- **Comprehensive Metrics**:
+  - **Capacity**: Total hardware resources
+  - **Allocatable**: Resources available to pods
+  - **Allocated**: Resources requested by running pods  
+  - **Available**: Resources still free for scheduling
 
-Updates every 30 seconds automatically.
+The controller watches:
+- ✅ Pod lifecycle events (create, delete, status changes)
+- ✅ Node changes (add, remove, capacity updates)
+- ✅ Resource request modifications
+
+**Response Time**: Immediate (< 1 second) + periodic backup every 30 seconds
 
 ## Example Output
 ```bash

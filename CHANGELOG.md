@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Phase 1 - Update] - 2025-11-15
+
+### Changed
+- **Event-driven controller**: Now watches Nodes and Pods for immediate updates
+- Controller responds to changes in < 1 second instead of waiting for 30-second interval
+- Added watch handlers for Node and Pod resources
+- Hybrid approach: Event-driven + periodic backup reconciliation
+
+### Technical Details
+- Added `Watches()` for Node and Pod resources in controller setup
+- Implemented `findAdvertisementsForNode()` and `findAdvertisementsForPod()` mapper functions
+- Controller now reconciles immediately when cluster state changes
+
 ## [Phase 1] - 2025-11-14
 
 ### Added

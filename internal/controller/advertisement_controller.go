@@ -21,10 +21,14 @@ import (
 	"fmt"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	rearv1alpha1 "github.com/mehdiazizian/liqo-resource-agent/api/v1alpha1"
 	"github.com/mehdiazizian/liqo-resource-agent/internal/metrics"
@@ -134,6 +138,55 @@ func (r *AdvertisementReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&rearv1alpha1.Advertisement{}).
+		Watches(
+			&corev1.Node{},
+			handler.EnqueueRequestsFromMapFunc(r.findAdvertisementsForNode),
+		).
+		Watches(
+			&corev1.Pod{},
+			handler.EnqueueRequestsFromMapFunc(r.findAdvertisementsForPod),
+		).
 		Named("advertisement").
 		Complete(r)
+}
+
+// findAdvertisementsForNode triggers reconciliation when nodes change
+func (r *AdvertisementReconciler) findAdvertisementsForNode(ctx context.Context, node client.Object) []reconcile.Request {
+	// Reconcile all advertisements when any node changes
+	advList := &rearv1alpha1.AdvertisementList{}
+	if err := r.List(ctx, advList); err != nil {
+		return []reconcile.Request{}
+	}
+
+	requests := make([]reconcile.Request, len(advList.Items))
+	for i, adv := range advList.Items {
+		requests[i] = reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      adv.Name,
+				Namespace: adv.Namespace,
+			},
+		}
+	}
+	return requests
+}
+
+// findAdvertisementsForPod triggers reconciliation when pods change
+func (r *AdvertisementReconciler) findAdvertisementsForPod(ctx context.Context, pod client.Object) []reconcile.Request {
+	// Only trigger if pod phase changed or resource requests changed
+	// Reconcile all advertisements
+	advList := &rearv1alpha1.AdvertisementList{}
+	if err := r.List(ctx, advList); err != nil {
+		return []reconcile.Request{}
+	}
+
+	requests := make([]reconcile.Request, len(advList.Items))
+	for i, adv := range advList.Items {
+		requests[i] = reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      adv.Name,
+				Namespace: adv.Namespace,
+			},
+		}
+	}
+	return requests
 }

@@ -136,6 +136,42 @@ Reconcile() called again (periodic update)
 (repeat)
 ```
 
+
+**Event-Driven Architecture:**
+
+The controller uses Kubernetes watch mechanisms to respond immediately to changes:
+```
+Node added/removed/changed
+         ↓
+Controller Watch triggers
+         ↓
+Reconcile() called immediately
+         ↓
+Collect fresh metrics
+         ↓
+Update Advertisement
+
+Pod created/deleted/changed
+         ↓
+Controller Watch triggers
+         ↓
+Reconcile() called immediately
+         ↓
+Recalculate allocated resources
+         ↓
+Update Advertisement
+```
+
+**Watched Resources:**
+- `Advertisements` - Primary resource
+- `Nodes` - Triggers when capacity/allocatable changes
+- `Pods` - Triggers when resource requests change
+
+**Response Time:**
+- Immediate reaction to cluster changes (typically < 1 second)
+- Plus periodic backup reconciliation every 30 seconds
+- This hybrid approach ensures both responsiveness and reliability
+
 **RBAC Permissions:**
 
 The controller needs these permissions (defined via kubebuilder annotations):
