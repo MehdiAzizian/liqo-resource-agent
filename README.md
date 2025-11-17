@@ -14,7 +14,7 @@ Kubernetes controller that automatically advertises cluster resources for the FL
 
 1. **Clone and navigate:**
 ```bash
-   cd tesi2
+   cd liqo-resource-agent
 ```
 
 2. **Install CRDs:**
