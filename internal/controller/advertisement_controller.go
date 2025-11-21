@@ -32,6 +32,7 @@ import (
 
 	rearv1alpha1 "github.com/mehdiazizian/liqo-resource-agent/api/v1alpha1"
 	"github.com/mehdiazizian/liqo-resource-agent/internal/metrics"
+	"github.com/mehdiazizian/liqo-resource-agent/internal/publisher" // ← Add this line
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -40,6 +41,7 @@ type AdvertisementReconciler struct {
 	client.Client
 	Scheme           *runtime.Scheme
 	MetricsCollector *metrics.Collector
+	BrokerClient     *publisher.BrokerClient // ← Add this line
 }
 
 // +kubebuilder:rbac:groups=rear.fluidos.eu,resources=advertisements,verbs=get;list;watch;create;update;patch;delete
@@ -100,7 +102,19 @@ func (r *AdvertisementReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		"allocated-memory", resourceData.Allocated.Memory.String())
 
 	// Update status to indicate successful publication
-	return r.updateStatus(ctx, advertisement, "Active", true, "Advertisement updated successfully")
+	result, err := r.updateStatus(ctx, advertisement, "Active", true, "Advertisement updated successfully")
+
+	// Publish to broker if enabled
+	if r.BrokerClient != nil && r.BrokerClient.Enabled {
+		if err := r.BrokerClient.PublishAdvertisement(ctx, advertisement); err != nil {
+			logger.Error(err, "Failed to publish to broker, will retry")
+			// Don't fail the reconciliation, just log the error
+		} else {
+			logger.Info("Successfully published to broker")
+		}
+	}
+
+	return result, err
 }
 
 // updateStatus updates the Advertisement status

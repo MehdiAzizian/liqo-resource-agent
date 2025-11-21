@@ -23,11 +23,11 @@ import (
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
-	_ "k8s.io/client-go/plugin/pkg/client/auth"
-
+	"github.com/mehdiazizian/liqo-resource-agent/internal/publisher" // ← Add this
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	_ "k8s.io/client-go/plugin/pkg/client/auth"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -62,6 +62,8 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
+	var brokerKubeconfig string // ← Add this line
+
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -79,6 +81,8 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.StringVar(&brokerKubeconfig, "broker-kubeconfig", "", "Path to kubeconfig for broker cluster (optional)") // ← Add this line
+
 	opts := zap.Options{
 		Development: true,
 	}
@@ -178,9 +182,25 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controller.AdvertisementReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+	// Initialize BrokerClient if kubeconfig provided
+	var brokerClient *publisher.BrokerClient
+	if brokerKubeconfig != "" {
+		setupLog.Info("Initializing broker client", "kubeconfig", brokerKubeconfig)
+		var err error
+		brokerClient, err = publisher.NewBrokerClient(brokerKubeconfig, "local-cluster")
+		if err != nil {
+			setupLog.Error(err, "failed to create broker client")
+			os.Exit(1)
+		}
+		setupLog.Info("Broker client initialized successfully")
+	} else {
+		setupLog.Info("Broker kubeconfig not provided, publishing to broker disabled")
+	}
+
+	if err = (&controller.AdvertisementReconciler{
+		Client:       mgr.GetClient(),
+		Scheme:       mgr.GetScheme(),
+		BrokerClient: brokerClient,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Advertisement")
 		os.Exit(1)
