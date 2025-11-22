@@ -83,6 +83,48 @@ func (b *BrokerClient) PublishAdvertisement(ctx context.Context, adv *rearv1alph
 		Resource: "clusteradvertisements",
 	}
 
+	resourceClient := b.Client.Resource(gvr).Namespace("default")
+
+	// Try to get existing to preserve Reserved field
+	existing, err := resourceClient.Get(ctx, fmt.Sprintf("%s-adv", b.ClusterID), metav1.GetOptions{})
+
+	var reservedResources map[string]interface{}
+	if err == nil && existing != nil {
+		// Preserve existing reserved resources
+		if spec, ok := existing.Object["spec"].(map[string]interface{}); ok {
+			if resources, ok := spec["resources"].(map[string]interface{}); ok {
+				if reserved, ok := resources["reserved"].(map[string]interface{}); ok {
+					reservedResources = reserved
+				}
+			}
+		}
+	}
+
+	// Build resources spec
+	resourcesSpec := map[string]interface{}{
+		"capacity": map[string]interface{}{
+			"cpu":    adv.Spec.Resources.Capacity.CPU.String(),
+			"memory": adv.Spec.Resources.Capacity.Memory.String(),
+		},
+		"allocatable": map[string]interface{}{
+			"cpu":    adv.Spec.Resources.Allocatable.CPU.String(),
+			"memory": adv.Spec.Resources.Allocatable.Memory.String(),
+		},
+		"allocated": map[string]interface{}{
+			"cpu":    adv.Spec.Resources.Allocated.CPU.String(),
+			"memory": adv.Spec.Resources.Allocated.Memory.String(),
+		},
+		"available": map[string]interface{}{
+			"cpu":    adv.Spec.Resources.Available.CPU.String(),
+			"memory": adv.Spec.Resources.Available.Memory.String(),
+		},
+	}
+
+	// Add reserved if it existed
+	if reservedResources != nil {
+		resourcesSpec["reserved"] = reservedResources
+	}
+
 	// Convert to unstructured
 	clusterAdv := &unstructured.Unstructured{
 		Object: map[string]interface{}{
@@ -95,32 +137,11 @@ func (b *BrokerClient) PublishAdvertisement(ctx context.Context, adv *rearv1alph
 			"spec": map[string]interface{}{
 				"clusterID":   adv.Spec.ClusterID,
 				"clusterName": b.ClusterID,
-				"resources": map[string]interface{}{
-					"capacity": map[string]interface{}{
-						"cpu":    adv.Spec.Resources.Capacity.CPU.String(),
-						"memory": adv.Spec.Resources.Capacity.Memory.String(),
-					},
-					"allocatable": map[string]interface{}{
-						"cpu":    adv.Spec.Resources.Allocatable.CPU.String(),
-						"memory": adv.Spec.Resources.Allocatable.Memory.String(),
-					},
-					"allocated": map[string]interface{}{
-						"cpu":    adv.Spec.Resources.Allocated.CPU.String(),
-						"memory": adv.Spec.Resources.Allocated.Memory.String(),
-					},
-					"available": map[string]interface{}{
-						"cpu":    adv.Spec.Resources.Available.CPU.String(),
-						"memory": adv.Spec.Resources.Available.Memory.String(),
-					},
-				},
-				"timestamp": adv.Spec.Timestamp.Format("2006-01-02T15:04:05Z"),
+				"resources":   resourcesSpec,
+				"timestamp":   adv.Spec.Timestamp.Format("2006-01-02T15:04:05Z"),
 			},
 		},
 	}
-
-	// Try to get existing
-	resourceClient := b.Client.Resource(gvr).Namespace("default")
-	existing, err := resourceClient.Get(ctx, clusterAdv.GetName(), metav1.GetOptions{})
 
 	if err != nil {
 		// Doesn't exist, create
