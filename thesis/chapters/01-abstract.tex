@@ -1,0 +1,32 @@
+\chapter*{Abstract}
+\addcontentsline{toc}{chapter}{Abstract}
+
+% TODO: Write your abstract (max 300-500 words)
+% The abstract should briefly describe:
+% 1. The problem and motivation
+% 2. Your approach/solution
+% 3. Key contributions
+% 4. Main results
+
+The proliferation of multi-cluster and multi-cloud Kubernetes deployments has created significant challenges in efficient resource allocation and workload placement. Traditional approaches require manual intervention or lack intelligent decision-making capabilities for cross-cluster resource management.
+
+This thesis presents an automatic cloud resource brokerage system for Kubernetes that enables intelligent, dynamic resource allocation across multiple clusters. The system comprises two main components: a Resource Agent deployed on each cluster to collect and publish resource metrics, and a centralized Resource Broker that receives advertisements from multiple clusters and makes optimal placement decisions based on resource availability and cost.
+
+The proposed solution implements the REAR (Resource Exchange and Advertisement for the Continuum) protocol using Kubernetes operators and Custom Resource Definitions (CRDs). The Resource Agent continuously monitors cluster resources (CPU, memory) and publishes advertisements to the broker, while the Resource Broker maintains a global view of all available clusters and implements a sophisticated decision engine for workload placement.
+
+Key contributions of this work include:
+\begin{itemize}
+    \item Design and implementation of a distributed resource brokerage architecture for Kubernetes
+    \item Development of a multi-criteria decision engine incorporating resource availability and cost optimization
+    \item Implementation of atomic reservation mechanisms with optimistic locking to prevent race conditions
+    \item Comprehensive evaluation demonstrating TODO\% improvement in resource utilization and TODO\% reduction in placement latency compared to baseline approaches
+\end{itemize}
+
+The system has been implemented as open-source Kubernetes operators using the Kubebuilder framework and validated through extensive testing including unit tests, integration tests, and end-to-end scenarios.
+
+\textbf{Keywords:} Kubernetes, Multi-cluster Management, Resource Brokerage, Cloud Computing, Container Orchestration, Workload Placement, Decision Engine, REAR Protocol
+
+\vfill
+
+% TODO: If your university requires an abstract in another language (e.g., Italian, German), add it here
+\cleardoublepage
