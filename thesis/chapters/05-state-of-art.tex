@@ -1,0 +1,258 @@
+\chapter{State of the Art}
+\label{chap:sota}
+
+This chapter reviews existing research and industrial solutions related to multi-cluster Kubernetes management, resource brokerage, and workload placement. We organize the discussion into several key areas and conclude with a critical analysis positioning our contribution.
+
+\section{Multi-Cluster Kubernetes Management}
+\label{sec:sota-multicluster}
+
+\subsection{Kubernetes Federation}
+
+Kubernetes Federation (KubeFed) was the first official attempt at multi-cluster management~\cite{TODO:kubefed}. It enables users to coordinate workloads across multiple Kubernetes clusters through a single control plane. However, Federation has several limitations:
+
+\begin{itemize}
+    \item Limited support for intelligent resource-based placement decisions
+    \item No built-in cost optimization mechanisms
+    \item Complex setup and configuration requirements
+    \item Deprecated in favor of newer approaches (KubeFed v2)
+\end{itemize}
+
+% TODO: Add specific limitations you observed or read about in papers
+
+\subsection{Liqo}
+
+Liqo is an open-source project that enables dynamic and seamless Kubernetes multi-cluster topologies~\cite{TODO:liqo-paper}. It extends a Kubernetes cluster by peering with remote clusters, making their resources available as virtual nodes. Key features include:
+
+\begin{itemize}
+    \item Transparent pod offloading to remote clusters
+    \item Network fabric for cross-cluster communication
+    \item Storage fabric for distributed persistent volumes
+\end{itemize}
+
+Our work builds upon Liqo's architectural principles but focuses specifically on the resource brokerage and intelligent placement aspects, implementing the REAR protocol for resource advertisement and reservation.
+
+% TODO: Explain how your work relates to or differs from Liqo
+
+\subsection{Admiralty}
+
+Admiralty is a multi-cluster scheduler that enables pod scheduling across clusters~\cite{TODO:admiralty}. It uses a "proxy pod" pattern where source pods are replaced with proxy pods, and target pods are created in remote clusters. While Admiralty addresses multi-cluster scheduling, it lacks:
+
+\begin{itemize}
+    \item Centralized resource brokerage and advertisement
+    \item Cost-aware placement decisions
+    \item Atomic reservation mechanisms for race condition prevention
+\end{itemize}
+
+\subsection{Clusternet}
+
+Clusternet provides multi-cluster management and application governance~\cite{TODO:clusternet}. It offers:
+\begin{itemize}
+    \item Cluster registration and discovery
+    \item Multi-cluster application deployment
+    \item RBAC and security policies across clusters
+\end{itemize}
+
+However, Clusternet focuses more on deployment orchestration than resource optimization and intelligent brokerage.
+
+\section{Cloud Resource Brokerage}
+\label{sec:sota-brokerage}
+
+\subsection{Commercial Cloud Brokers}
+
+Several commercial solutions provide cloud brokerage services:
+
+\paragraph{RightScale (Flexera)} provides multi-cloud management with cost optimization and policy-based governance~\cite{TODO:rightscale}. However, it operates at the infrastructure level (VMs, cloud services) rather than container/Kubernetes level.
+
+\paragraph{CloudHealth by VMware} offers cloud cost management and optimization but lacks fine-grained resource allocation at the Kubernetes workload level~\cite{TODO:cloudhealth}.
+
+% TODO: Add more commercial solutions if relevant
+
+\subsection{Academic Research in Resource Brokerage}
+
+Several academic works have addressed resource brokerage in cloud and edge computing:
+
+\paragraph{REAR Protocol}
+The Resource Exchange and Advertisement for the Continuum (REAR) protocol was proposed for resource management in cloud-edge continuum environments~\cite{TODO:rear-paper}. It defines mechanisms for:
+\begin{itemize}
+    \item Resource advertisement from edge/cloud nodes
+    \item Resource discovery and selection
+    \item Reservation and allocation
+\end{itemize}
+
+Our work provides a concrete implementation of REAR principles in the Kubernetes ecosystem.
+
+% TODO: Add more academic papers on resource brokerage, edge-cloud continuum, etc.
+
+\paragraph{Market-Based Resource Allocation}
+Research by TODO~\cite{TODO:market-based} proposes auction-based mechanisms for cloud resource allocation. While theoretically sound, these approaches often lack practical implementations and integration with modern container orchestration platforms.
+
+% TODO: Add relevant papers on:
+% - Market-based resource allocation
+% - Auction mechanisms for cloud resources
+% - Game-theoretic approaches
+% - Energy-aware resource management
+
+\section{Workload Placement and Scheduling}
+\label{sec:sota-placement}
+
+\subsection{Kubernetes Default Scheduler}
+
+The default Kubernetes scheduler uses a two-phase process~\cite{TODO:k8s-scheduler-docs}:
+\begin{enumerate}
+    \item \textbf{Filtering}: Eliminates nodes that don't meet pod requirements
+    \item \textbf{Scoring}: Ranks remaining nodes based on various factors
+\end{enumerate}
+
+While effective for single-cluster scenarios, the default scheduler:
+\begin{itemize}
+    \item Has no awareness of other clusters
+    \item Does not consider cost in placement decisions
+    \item Cannot coordinate resources across cluster boundaries
+\end{itemize}
+
+\subsection{Custom Schedulers and Frameworks}
+
+\paragraph{Volcano} is a batch scheduling system for Kubernetes targeting HPC and AI workloads~\cite{TODO:volcano}. It provides advanced scheduling features like gang scheduling and fair-share scheduling but operates within a single cluster.
+
+\paragraph{Yunikorn} (incubating at Apache) provides resource scheduling for containerized workloads with focus on batch processing~\cite{TODO:yunikorn}.
+
+% TODO: Explain why these don't solve your problem (single-cluster focused, no brokerage, etc.)
+
+\subsection{Multi-Objective Scheduling}
+
+Research has explored multi-objective optimization for workload placement considering energy, performance, and cost~\cite{TODO:multi-objective-paper}. However, most solutions:
+\begin{itemize}
+    \item Are simulation-based without production implementations
+    \item Don't integrate with Kubernetes ecosystem
+    \item Lack consideration for concurrent reservation scenarios
+\end{itemize}
+
+% TODO: Add papers on:
+% - Multi-objective optimization for cloud placement
+% - Energy-aware scheduling
+% - Cost-aware scheduling
+% - QoS-aware placement
+
+\section{Concurrency Control in Distributed Systems}
+\label{sec:sota-concurrency}
+
+Our atomic reservation mechanism draws from established distributed systems concepts:
+
+\subsection{Optimistic Concurrency Control}
+
+Kubernetes uses optimistic concurrency control via resourceVersion for conflict detection~\cite{TODO:k8s-api-conventions}. When multiple clients attempt to update the same resource simultaneously, conflicts are detected and clients must retry.
+
+Our implementation leverages this mechanism combined with:
+\begin{itemize}
+    \item Exponential backoff retry strategy
+    \item Read-modify-write pattern
+    \item Bounds checking to prevent negative resources
+\end{itemize}
+
+\subsection{Two-Phase Commit and Consensus}
+
+Distributed transaction protocols like two-phase commit (2PC)~\cite{TODO:2pc-paper} and consensus algorithms like Raft~\cite{TODO:raft-paper} ensure atomicity in distributed systems. While we don't implement full 2PC, our atomic reservation pattern provides similar guarantees through Kubernetes' etcd-backed consistency.
+
+% TODO: Explain why you chose optimistic locking over 2PC or other approaches
+
+\section{Container Resource Management}
+\label{sec:sota-container-resource}
+
+\subsection{Resource Requests and Limits}
+
+Kubernetes allows specifying resource requests (guaranteed) and limits (maximum) for containers~\cite{TODO:k8s-resource-docs}. Our system builds on this by:
+\begin{itemize}
+    \item Aggregating container requests to calculate allocated resources
+    \item Using requests for placement decisions (not limits)
+    \item Tracking both allocated and available resources separately
+\end{itemize}
+
+\subsection{Vertical and Horizontal Pod Autoscaling}
+
+Kubernetes supports autoscaling through:
+\begin{itemize}
+    \item Horizontal Pod Autoscaler (HPA): Scales number of pod replicas~\cite{TODO:hpa}
+    \item Vertical Pod Autoscaler (VPA): Adjusts resource requests/limits~\cite{TODO:vpa}
+    \item Cluster Autoscaler: Scales cluster node count~\cite{TODO:cluster-autoscaler}
+\end{itemize}
+
+While these address scaling within a cluster, they don't solve cross-cluster placement optimization.
+
+% TODO: Mention how your broker could interact with autoscalers
+
+\section{Monitoring and Metrics Collection}
+\label{sec:sota-monitoring}
+
+\subsection{Metrics Server}
+
+Kubernetes Metrics Server provides resource usage metrics for autoscaling~\cite{TODO:metrics-server}. However:
+\begin{itemize}
+    \item Focuses on actual usage, not requests/allocations
+    \item Designed for single-cluster scenarios
+    \item Limited historical data retention
+\end{itemize}
+
+\subsection{Prometheus and Custom Metrics}
+
+Prometheus is the standard monitoring solution for Kubernetes~\cite{TODO:prometheus}. Our Resource Agent could potentially integrate with Prometheus for:
+\begin{itemize}
+    \item Historical resource trends
+    \item Predictive analysis
+    \item Custom metrics beyond CPU/memory
+\end{itemize}
+
+% TODO: Discuss if you used Prometheus or plan to integrate it
+
+\section{Gap Analysis and Positioning}
+\label{sec:gap-analysis}
+
+\begin{table}[ht]
+\centering
+\caption{Comparison of multi-cluster management solutions}
+\label{tab:comparison}
+\begin{tabular}{@{}lcccccc@{}}
+\toprule
+\textbf{Solution} & \textbf{Multi-Cluster} & \textbf{Resource Brokerage} & \textbf{Cost-Aware} & \textbf{Atomic Reservation} & \textbf{K8s Native} \\ \midrule
+KubeFed           & \checkmark             & $\times$                     & $\times$            & $\times$                    & \checkmark          \\
+Liqo              & \checkmark             & Partial                      & $\times$            & $\times$                    & \checkmark          \\
+Admiralty         & \checkmark             & $\times$                     & $\times$            & $\times$                    & \checkmark          \\
+Clusternet        & \checkmark             & $\times$                     & $\times$            & $\times$                    & \checkmark          \\
+RightScale        & \checkmark             & \checkmark                   & \checkmark          & $\times$                    & $\times$            \\
+\textbf{Our Work} & \checkmark             & \checkmark                   & \checkmark          & \checkmark                  & \checkmark          \\ \bottomrule
+\end{tabular}
+\end{table}
+
+% TODO: Update table with accurate information based on your research
+
+Despite significant progress in multi-cluster Kubernetes management, existing solutions exhibit several gaps that our work addresses:
+
+\begin{enumerate}
+    \item \textbf{Lack of Intelligent Resource Brokerage}: Most solutions focus on deployment orchestration or cluster federation but lack sophisticated resource brokerage mechanisms that consider multiple criteria (availability, cost, locality).
+
+    \item \textbf{No Cost Optimization}: Open-source multi-cluster managers typically ignore cost in placement decisions, while commercial solutions operate at infrastructure level, not Kubernetes workload level.
+
+    \item \textbf{Race Condition Vulnerabilities}: Existing systems don't properly handle concurrent reservation requests, leading to potential double-booking scenarios.
+
+    \item \textbf{Missing REAR Protocol Implementation}: While the REAR protocol provides a solid theoretical foundation, practical Kubernetes-native implementations are lacking.
+
+    \item \textbf{Limited Extensibility}: Many solutions are monolithic and difficult to extend with custom decision logic or metrics.
+\end{enumerate}
+
+Our contribution fills these gaps by providing:
+\begin{itemize}
+    \item A production-ready, Kubernetes-native implementation of resource brokerage
+    \item Multi-criteria decision making with configurable weights
+    \item Atomic reservation mechanisms preventing race conditions
+    \item Extensible architecture allowing custom scoring algorithms
+    \item Open-source implementation enabling community contributions
+\end{itemize}
+
+\section{Summary}
+\label{sec:sota-summary}
+
+This chapter surveyed existing work in multi-cluster Kubernetes management, cloud resource brokerage, workload placement, and related areas. While each solution addresses specific aspects of the problem, none provide a comprehensive, Kubernetes-native resource brokerage system with intelligent decision-making and robust concurrency control.
+
+Our work synthesizes ideas from multiple domains—REAR protocol principles, Kubernetes operator patterns, optimistic concurrency control, and multi-criteria decision making—into a cohesive system that advances the state of the art in automatic cloud resource brokerage for Kubernetes environments.
+
+% TODO: Add more references throughout this chapter
+% TODO: Ensure all citations are added to references.bib

@@ -1,0 +1,130 @@
+\chapter{Introduction}
+\label{chap:introduction}
+
+\section{Motivation and Context}
+\label{sec:motivation}
+
+The widespread adoption of containerization and Kubernetes as the de facto standard for container orchestration has fundamentally transformed how applications are deployed and managed in cloud environments. Organizations increasingly operate multiple Kubernetes clusters across different cloud providers, edge locations, and on-premises data centers to achieve geographic distribution, fault tolerance, regulatory compliance, and cost optimization~\cite{TODO:kubernetes-book}.
+
+However, this multi-cluster paradigm introduces significant challenges in resource management. Each cluster operates independently with its own resource pool, leading to inefficient resource utilization where some clusters may be over-provisioned while others are resource-starved. Traditional approaches require manual intervention by operators to decide where to deploy workloads, which is error-prone, time-consuming, and does not scale as the number of clusters grows.
+
+Furthermore, the dynamic nature of cloud resources—with varying availability, performance characteristics, and pricing models across providers and regions—necessitates intelligent decision-making mechanisms that can automatically select the most suitable cluster for workload placement based on multiple criteria including resource availability, cost, latency, and service level agreements (SLAs).
+
+% TODO: Add specific statistics or case studies if available
+% For example: "Studies show that enterprises manage an average of X clusters..."
+
+\section{Problem Statement}
+\label{sec:problem}
+
+The central problem addressed in this thesis is: \textit{How can we design and implement an automatic resource brokerage system for Kubernetes that enables intelligent, dynamic workload placement across multiple clusters while optimizing for resource utilization and cost?}
+
+This overarching problem encompasses several key challenges:
+
+\begin{enumerate}
+    \item \textbf{Resource Discovery and Monitoring}: How to efficiently collect and aggregate real-time resource metrics (CPU, memory, storage) from distributed Kubernetes clusters without imposing significant overhead?
+
+    \item \textbf{Resource Advertisement}: How to design a scalable protocol for clusters to advertise their available resources to a central decision-making entity?
+
+    \item \textbf{Multi-Criteria Decision Making}: How to implement a decision engine that considers multiple factors (resource availability, cost, locality, SLAs) to select the optimal cluster for workload placement?
+
+    \item \textbf{Reservation and Concurrency Control}: How to prevent race conditions when multiple workloads attempt to reserve resources from the same cluster simultaneously?
+
+    \item \textbf{Scalability and Reliability}: How to ensure the system scales to hundreds of clusters and handles failures gracefully?
+\end{enumerate}
+
+\section{Research Objectives}
+\label{sec:objectives}
+
+The primary objectives of this thesis are:
+
+\begin{itemize}
+    \item \textbf{O1}: Design a distributed architecture for automatic resource brokerage in multi-cluster Kubernetes environments following the REAR protocol principles.
+
+    \item \textbf{O2}: Implement a Resource Agent component that monitors cluster resources and publishes advertisements with minimal performance overhead.
+
+    \item \textbf{O3}: Implement a Resource Broker component that aggregates cluster advertisements and provides intelligent workload placement decisions.
+
+    \item \textbf{O4}: Develop a multi-criteria decision engine that optimizes for both resource utilization and cost.
+
+    \item \textbf{O5}: Design and implement atomic reservation mechanisms with proper concurrency control to prevent race conditions.
+
+    \item \textbf{O6}: Validate the system through comprehensive testing including unit tests, integration tests, and end-to-end scenarios.
+
+    \item \textbf{O7}: Evaluate the system's performance, scalability, and effectiveness compared to baseline approaches.
+\end{itemize}
+
+\section{Proposed Solution}
+\label{sec:solution}
+
+This thesis presents a comprehensive resource brokerage system for Kubernetes consisting of two main components:
+
+\subsection{Resource Agent}
+
+The Resource Agent is a Kubernetes operator deployed on each managed cluster. It continuously monitors cluster resources by:
+\begin{itemize}
+    \item Collecting node-level metrics (allocatable, allocated, available CPU and memory)
+    \item Filtering nodes based on readiness and schedulability
+    \item Aggregating pod resource requests to calculate allocated resources
+    \item Publishing Advertisement custom resources to the Resource Broker
+\end{itemize}
+
+The Agent implements intelligent reconciliation strategies to minimize unnecessary updates and uses exponential backoff retry mechanisms for reliable communication with the broker.
+
+\subsection{Resource Broker}
+
+The Resource Broker is a centralized Kubernetes operator that:
+\begin{itemize}
+    \item Receives and maintains ClusterAdvertisement resources from multiple Resource Agents
+    \item Tracks cluster health and marks stale advertisements as inactive
+    \item Implements a decision engine with multi-criteria scoring (resource availability and cost)
+    \item Manages Reservation resources that represent workload placement requests
+    \item Performs atomic reservation operations with optimistic locking to prevent race conditions
+\end{itemize}
+
+The architecture follows Kubernetes-native patterns using Custom Resource Definitions (CRDs) and the controller-runtime framework, ensuring seamless integration with existing Kubernetes tooling and workflows.
+
+\section{Key Contributions}
+\label{sec:contributions}
+
+This thesis makes the following key contributions:
+
+\begin{enumerate}
+    \item \textbf{Architecture Design}: A novel distributed architecture for automatic resource brokerage in multi-cluster Kubernetes environments that balances centralized decision-making with distributed resource monitoring.
+
+    \item \textbf{REAR Protocol Implementation}: A production-ready implementation of the Resource Exchange and Advertisement for the Continuum (REAR) protocol using Kubernetes operators and CRDs.
+
+    \item \textbf{Multi-Criteria Decision Engine}: An extensible decision engine that combines resource-based scoring (70\% weight) with cost-based scoring (30\% weight) using inverse cost scaling to favor cheaper clusters.
+
+    \item \textbf{Atomic Reservation Mechanism}: A novel atomic reservation mechanism using Kubernetes' optimistic concurrency control (resourceVersion) with exponential backoff retry to prevent double-booking of cluster resources.
+
+    \item \textbf{Production-Ready Implementation}: Two open-source Kubernetes operators (liqo-resource-agent and liqo-resource-broker) built with industry best practices including:
+    \begin{itemize}
+        \item Comprehensive error handling and retry logic
+        \item Extensive test coverage (unit, integration, and end-to-end tests)
+        \item Proper bounds checking and division-by-zero protection
+        \item Adherence to Kubernetes controller patterns
+    \end{itemize}
+
+    \item \textbf{Performance Evaluation}: Empirical evaluation demonstrating the system's effectiveness in TODO: describe key results.
+\end{enumerate}
+
+\section{Thesis Organization}
+\label{sec:organization}
+
+The remainder of this thesis is organized as follows:
+
+\begin{itemize}
+    \item \textbf{Chapter~\ref{chap:sota}}: Presents the state of the art in multi-cluster management, resource brokerage systems, and related work in cloud resource allocation.
+
+    \item \textbf{Chapter~\ref{chap:background}}: Provides essential background on Kubernetes architecture, operators, Custom Resource Definitions, and the REAR protocol.
+
+    \item \textbf{Chapter~\ref{chap:design}}: Describes the system architecture, design decisions, and the interaction between Resource Agents and Resource Broker.
+
+    \item \textbf{Chapter~\ref{chap:implementation}}: Details the implementation of both components, including key algorithms, data structures, and technical challenges encountered.
+
+    \item \textbf{Chapter~\ref{chap:evaluation}}: Presents the experimental setup, evaluation methodology, and results demonstrating the system's performance and effectiveness.
+
+    \item \textbf{Chapter~\ref{chap:conclusion}}: Concludes the thesis with a summary of contributions, limitations, and directions for future work.
+\end{itemize}
+
+% TODO: Adjust chapter references if you change the chapter structure

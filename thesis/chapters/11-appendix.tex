@@ -1,0 +1,406 @@
+\chapter{Appendix}
+\label{chap:appendix}
+
+\section{Installation Guide}
+\label{sec:installation}
+
+\subsection{Prerequisites}
+
+Before installing the Resource Agent and Resource Broker, ensure you have:
+
+\begin{itemize}
+    \item Kubernetes cluster(s) v1.24+
+    \item kubectl configured with cluster access
+    \item Sufficient RBAC permissions to install CRDs and operators
+    \item (Optional) Helm v3+ for simplified deployment
+\end{itemize}
+
+\subsection{Installing Resource Broker}
+
+\begin{enumerate}
+    \item Clone the repository:
+\begin{lstlisting}[language=bash]
+git clone https://github.com/MehdiAzizian/liqo-resource-broker.git
+cd liqo-resource-broker
+\end{lstlisting}
+
+    \item Install CRDs:
+\begin{lstlisting}[language=bash]
+make install
+\end{lstlisting}
+
+    \item Deploy the broker:
+\begin{lstlisting}[language=bash]
+make deploy IMG=<your-image-registry>/liqo-resource-broker:latest
+\end{lstlisting}
+
+    \item Verify deployment:
+\begin{lstlisting}[language=bash]
+kubectl get pods -n liqo-resource-broker-system
+kubectl get crds | grep broker.fluidos.eu
+\end{lstlisting}
+\end{enumerate}
+
+\subsection{Installing Resource Agent}
+
+\begin{enumerate}
+    \item Clone the repository:
+\begin{lstlisting}[language=bash]
+git clone https://github.com/MehdiAzizian/liqo-resource-agent.git
+cd liqo-resource-agent
+\end{lstlisting}
+
+    \item Install CRDs:
+\begin{lstlisting}[language=bash]
+make install
+\end{lstlisting}
+
+    \item Configure broker connection (edit config/manager/manager.yaml):
+\begin{lstlisting}[language=yaml]
+env:
+- name: BROKER_ENDPOINT
+  value: "<broker-cluster-api-endpoint>"
+- name: BROKER_TOKEN
+  value: "<service-account-token>"
+\end{lstlisting}
+
+    \item Deploy the agent:
+\begin{lstlisting}[language=bash]
+make deploy IMG=<your-image-registry>/liqo-resource-agent:latest
+\end{lstlisting}
+
+    \item Verify deployment:
+\begin{lstlisting}[language=bash]
+kubectl get pods -n liqo-resource-agent-system
+kubectl get advertisements
+\end{lstlisting}
+\end{enumerate}
+
+\subsection{Creating a Reservation}
+
+\begin{lstlisting}[language=yaml, caption={Example reservation}, label={lst:example-reservation}]
+apiVersion: broker.fluidos.eu/v1alpha1
+kind: Reservation
+metadata:
+  name: example-workload
+  namespace: default
+spec:
+  targetClusterID: ""  # Empty for automatic selection
+  requestedResources:
+    cpu: "4"
+    memory: "8Gi"
+  requirements:
+    maxCost: "0.10"
+\end{lstlisting}
+
+Apply the reservation:
+\begin{lstlisting}[language=bash]
+kubectl apply -f reservation.yaml
+\end{lstlisting}
+
+Check the status:
+\begin{lstlisting}[language=bash]
+kubectl get reservation example-workload -o yaml
+\end{lstlisting}
+
+\section{Configuration Reference}
+\label{sec:config-reference}
+
+\subsection{Resource Agent Configuration}
+
+\begin{table}[ht]
+\centering
+\caption{Resource Agent configuration parameters}
+\label{tab:ra-config}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Description} & \textbf{Default} \\ \midrule
+CLUSTER\_ID & Unique identifier for this cluster & auto-detected \\
+BROKER\_ENDPOINT & Broker cluster API server URL & Required \\
+BROKER\_TOKEN & Authentication token for broker & Required \\
+UPDATE\_INTERVAL & Advertisement update interval & 30s \\
+NAMESPACE & Namespace for Advertisement resource & default \\
+ENABLE\_COST & Include cost information & false \\
+COST\_AMOUNT & Cost per CPU-hour & "0.05" \\ \bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Resource Broker Configuration}
+
+\begin{table}[ht]
+\centering
+\caption{Resource Broker configuration parameters}
+\label{tab:rb-config}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Description} & \textbf{Default} \\ \midrule
+STALENESS\_THRESHOLD & Time before marking advertisement stale & 10m \\
+RESOURCE\_WEIGHT & Weight for resource scoring (0-1) & 0.7 \\
+COST\_WEIGHT & Weight for cost scoring (0-1) & 0.3 \\
+MAX\_RETRIES & Max retries for atomic reservation & 5 \\
+BASE\_BACKOFF & Initial backoff for retries & 100ms \\ \bottomrule
+\end{tabular}
+\end{table}
+
+\section{API Reference}
+\label{sec:api-reference}
+
+\subsection{Advertisement Resource}
+
+\textbf{API Group}: rear.fluidos.eu/v1alpha1
+
+\textbf{Kind}: Advertisement
+
+\textbf{Spec Fields}:
+\begin{itemize}
+    \item \texttt{clusterID} (string): Unique cluster identifier
+    \item \texttt{timestamp} (metav1.Time): When metrics were collected
+    \item \texttt{resources} (ResourceMetrics): Resource information
+    \begin{itemize}
+        \item \texttt{allocatable} (ResourceQuantities): Total allocatable resources
+        \item \texttt{allocated} (ResourceQuantities): Currently allocated resources
+        \item \texttt{available} (ResourceQuantities): Currently available resources
+    \end{itemize}
+    \item \texttt{cost} (CostInformation, optional): Cost information
+    \begin{itemize}
+        \item \texttt{amount} (string): Cost value
+        \item \texttt{currency} (string): Currency code (e.g., "USD")
+        \item \texttt{unit} (string): Unit of measurement (e.g., "cpu-hour")
+    \end{itemize}
+\end{itemize}
+
+\textbf{Status Fields}:
+\begin{itemize}
+    \item \texttt{published} (bool): Whether successfully published to broker
+    \item \texttt{lastPublishTime} (metav1.Time): Last publish timestamp
+    \item \texttt{message} (string): Human-readable status message
+\end{itemize}
+
+\subsection{ClusterAdvertisement Resource}
+
+\textbf{API Group}: broker.fluidos.eu/v1alpha1
+
+\textbf{Kind}: ClusterAdvertisement
+
+\textbf{Spec Fields}: Same as Advertisement, plus:
+\begin{itemize}
+    \item \texttt{resources.reserved} (ResourceQuantities): Reserved resources
+\end{itemize}
+
+\textbf{Status Fields}:
+\begin{itemize}
+    \item \texttt{active} (bool): Whether advertisement is fresh (not stale)
+    \item \texttt{phase} (string): Current phase ("Active", "Stale")
+    \item \texttt{score} (string): Computed score for this cluster
+    \item \texttt{lastUpdateTime} (metav1.Time): Last status update
+    \item \texttt{message} (string): Human-readable status message
+\end{itemize}
+
+\subsection{Reservation Resource}
+
+\textbf{API Group}: broker.fluidos.eu/v1alpha1
+
+\textbf{Kind}: Reservation
+
+\textbf{Spec Fields}:
+\begin{itemize}
+    \item \texttt{targetClusterID} (string): Specific cluster ID (empty for auto-select)
+    \item \texttt{requestedResources} (ResourceQuantities): Required resources
+    \item \texttt{requirements} (ReservationRequirements, optional): Additional constraints
+\end{itemize}
+
+\textbf{Status Fields}:
+\begin{itemize}
+    \item \texttt{phase} (string): Current phase ("Pending", "Reserved", "Active", "Failed", "Completed")
+    \item \texttt{selectedClusterID} (string): Cluster where resources were reserved
+    \item \texttt{reservationTime} (metav1.Time): When reservation was made
+    \item \texttt{message} (string): Human-readable status message
+\end{itemize}
+
+\section{Common Issues and Troubleshooting}
+\label{sec:troubleshooting}
+
+\subsection{Agent Cannot Connect to Broker}
+
+\textbf{Symptoms}: Advertisement status shows \texttt{published: false} with message about connection failure.
+
+\textbf{Possible Causes}:
+\begin{itemize}
+    \item Incorrect BROKER\_ENDPOINT configuration
+    \item Invalid or expired BROKER\_TOKEN
+    \item Network connectivity issues
+    \item Broker not running or CRDs not installed
+\end{itemize}
+
+\textbf{Solutions}:
+\begin{enumerate}
+    \item Verify broker endpoint is correct and accessible
+    \item Check broker pod logs: \texttt{kubectl logs -n liqo-resource-broker-system <pod>}
+    \item Verify service account token has proper RBAC permissions
+    \item Test connectivity from agent cluster to broker cluster
+\end{enumerate}
+
+\subsection{Reservation Stuck in Pending}
+
+\textbf{Symptoms}: Reservation remains in "Pending" phase indefinitely.
+
+\textbf{Possible Causes}:
+\begin{itemize}
+    \item No clusters have sufficient resources
+    \item All advertisements are stale
+    \item Reservation controller not running
+    \item Decision engine error
+\end{itemize}
+
+\textbf{Solutions}:
+\begin{enumerate}
+    \item Check ClusterAdvertisement resources: \texttt{kubectl get clusteradvertisements}
+    \item Verify at least one is Active with sufficient resources
+    \item Check broker controller logs for errors
+    \item Reduce requested resources if too high
+\end{enumerate}
+
+\subsection{Resource Tracking Inaccuracy}
+
+\textbf{Symptoms}: Advertised resources don't match actual cluster state.
+
+\textbf{Possible Causes}:
+\begin{itemize}
+    \item Pending pods counted as allocated
+    \item Failed pods not filtered out
+    \item Not-ready nodes counted as allocatable
+    \item Reserved resources not properly updated
+\end{itemize}
+
+\textbf{Solutions}:
+\begin{enumerate}
+    \item Check agent logs for errors in metrics collection
+    \item Verify node readiness states
+    \item Manually verify allocated resources match pod requests
+    \item Check for completed/failed reservations not cleaned up
+\end{enumerate}
+
+\section{Performance Tuning}
+\label{sec:performance-tuning}
+
+\subsection{Reducing Agent Overhead}
+
+\begin{itemize}
+    \item Increase UPDATE\_INTERVAL to reduce API server load (trade-off: less fresh data)
+    \item Use client caching (enabled by default)
+    \item Filter nodes by labels if only subset should be monitored
+    \item Exclude certain namespaces from pod counting
+\end{itemize}
+
+\subsection{Reducing Broker Latency}
+
+\begin{itemize}
+    \item Deploy broker on high-performance nodes
+    \item Use SSD storage for etcd
+    \item Increase broker replica count for horizontal scaling
+    \item Implement caching for frequently accessed ClusterAdvertisements
+\end{itemize}
+
+\subsection{Handling High Concurrency}
+
+\begin{itemize}
+    \item Increase MAX\_RETRIES if seeing many conflicts
+    \item Adjust BASE\_BACKOFF and backoff factor
+    \item Implement request queuing to serialize high-contention scenarios
+    \item Consider sharding reservations across multiple brokers
+\end{itemize}
+
+\section{Code Repository Structure}
+\label{sec:repo-structure}
+
+\subsection{Resource Agent Repository}
+
+\begin{lstlisting}
+liqo-resource-agent/
+├── api/v1alpha1/              # CRD types
+├── config/                    # Kubernetes manifests
+│   ├── crd/                   # CRD YAML
+│   ├── manager/               # Deployment
+│   ├── rbac/                  # RBAC rules
+│   └── samples/               # Example resources
+├── internal/
+│   ├── controller/            # Controllers
+│   ├── metrics/               # Metrics collection
+│   └── publisher/             # Broker publishing
+├── cmd/main.go
+├── Dockerfile
+├── Makefile
+└── README.md
+\end{lstlisting}
+
+\subsection{Resource Broker Repository}
+
+\begin{lstlisting}
+liqo-resource-broker/
+├── api/v1alpha1/              # CRD types
+├── config/                    # Kubernetes manifests
+├── internal/
+│   ├── broker/                # Decision engine
+│   ├── controller/            # Controllers
+│   └── resource/              # Resource calculations
+├── test/
+│   ├── e2e/                   # End-to-end tests
+│   └── utils/                 # Test utilities
+├── cmd/main.go
+├── Dockerfile
+├── Makefile
+└── README.md
+\end{lstlisting}
+
+\section{Experimental Data}
+\label{sec:experimental-data}
+
+% TODO: Include raw experimental data, graphs, or supplementary tables that didn't fit in the main evaluation chapter
+
+\subsection{Detailed Latency Measurements}
+
+% TODO: Add detailed latency breakdown tables
+
+\subsection{Resource Utilization Timeseries}
+
+% TODO: Add graphs showing utilization over time for case study
+
+\subsection{Cost Analysis}
+
+% TODO: Add detailed cost breakdown comparing algorithms
+
+\section{Published Papers and Code}
+\label{sec:publications}
+
+\subsection{Source Code Repositories}
+
+\begin{itemize}
+    \item Resource Agent: \url{https://github.com/MehdiAzizian/liqo-resource-agent}
+    \item Resource Broker: \url{https://github.com/MehdiAzizian/liqo-resource-broker}
+\end{itemize}
+
+% TODO: Add DOI links if you archive code in Zenodo or similar
+
+\subsection{Related Publications}
+
+% TODO: List any papers, posters, or demos based on this work
+
+% If you publish workshop papers, conference papers, or demos based on this thesis, list them here:
+% \begin{itemize}
+%     \item Author Name, "Paper Title," Conference/Workshop, Year.
+% \end{itemize}
+
+\section{Acknowledgments for External Code}
+\label{sec:code-acknowledgments}
+
+This project builds upon and uses code from the following open-source projects:
+
+\begin{itemize}
+    \item \textbf{Kubernetes}: \url{https://kubernetes.io/} (Apache License 2.0)
+    \item \textbf{Kubebuilder}: \url{https://kubebuilder.io/} (Apache License 2.0)
+    \item \textbf{controller-runtime}: \url{https://github.com/kubernetes-sigs/controller-runtime} (Apache License 2.0)
+    \item \textbf{Liqo}: \url{https://liqo.io/} (Apache License 2.0) - Inspiration for architecture
+    \item \textbf{Ginkgo/Gomega}: \url{https://onsi.github.io/ginkgo/} (MIT License)
+\end{itemize}
+
+% TODO: Add specific acknowledgments if you used code snippets from Stack Overflow, blog posts, etc.
