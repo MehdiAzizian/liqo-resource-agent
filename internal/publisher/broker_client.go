@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -69,13 +72,49 @@ func loadBrokerConfig(kubeconfigPath string) (*rest.Config, error) {
 	return config, nil
 }
 
-// PublishAdvertisement publishes or updates an advertisement in the broker
+// PublishAdvertisement publishes or updates an advertisement in the broker with retry logic
 func (b *BrokerClient) PublishAdvertisement(ctx context.Context, adv *rearv1alpha1.Advertisement) error {
 	if !b.Enabled {
-		// Publishing disabled, skip
 		return nil
 	}
 
+	// Retry with exponential backoff
+	backoff := wait.Backoff{
+		Steps:    4,
+		Duration: 500 * time.Millisecond,
+		Factor:   2.0,
+		Jitter:   0.1,
+	}
+
+	var lastErr error
+	err := wait.ExponentialBackoff(backoff, func() (bool, error) {
+		err := b.publishOnce(ctx, adv)
+		if err == nil {
+			return true, nil // Success
+		}
+
+		// Check if error is transient
+		if isTransientError(err) {
+			lastErr = err
+			return false, nil // Retry
+		}
+
+		// Permanent error
+		return false, err
+	})
+
+	if err != nil {
+		if lastErr != nil {
+			return fmt.Errorf("publish failed after retries: %w", lastErr)
+		}
+		return err
+	}
+
+	return nil
+}
+
+// publishOnce performs a single publish attempt
+func (b *BrokerClient) publishOnce(ctx context.Context, adv *rearv1alpha1.Advertisement) error {
 	// Define the GVR for ClusterAdvertisement
 	gvr := schema.GroupVersionResource{
 		Group:    "broker.fluidos.eu",
@@ -163,4 +202,22 @@ func (b *BrokerClient) PublishAdvertisement(ctx context.Context, adv *rearv1alph
 	}
 
 	return nil
+}
+
+// isTransientError checks if error is temporary and should be retried
+func isTransientError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Kubernetes API errors
+	if apierrors.IsTimeout(err) ||
+		apierrors.IsServerTimeout(err) ||
+		apierrors.IsServiceUnavailable(err) ||
+		apierrors.IsTooManyRequests(err) ||
+		apierrors.IsInternalError(err) {
+		return true
+	}
+
+	return false
 }
