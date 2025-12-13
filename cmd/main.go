@@ -193,6 +193,38 @@ func main() {
 			os.Exit(1)
 		}
 		setupLog.Info("Broker client initialized successfully")
+
+		// Start watching for reservation decisions from broker (event-driven, no polling!)
+		ctx := ctrl.SetupSignalHandler()
+		brokerClient.WatchReservationsForCluster(ctx, func(eventType string, reservation map[string]interface{}) {
+			// Extract reservation details
+			metadata, _ := reservation["metadata"].(map[string]interface{})
+			spec, _ := reservation["spec"].(map[string]interface{})
+			status, _ := reservation["status"].(map[string]interface{})
+
+			name, _ := metadata["name"].(string)
+			phase, _ := status["phase"].(string)
+			targetCluster, _ := spec["targetClusterID"].(string)
+			message, _ := status["message"].(string)
+
+			// Extract requested resources
+			requestedResources, _ := spec["requestedResources"].(map[string]interface{})
+			cpu, _ := requestedResources["cpu"].(string)
+			memory, _ := requestedResources["memory"].(string)
+
+			// Log the event for cluster manager to see
+			if eventType == "ADDED" || eventType == "MODIFIED" {
+				setupLog.Info("📊 Borrowing Decision from Broker",
+					"event", eventType,
+					"reservation", name,
+					"phase", phase,
+					"requestedCPU", cpu,
+					"requestedMemory", memory,
+					"targetCluster", targetCluster,
+					"message", message)
+			}
+		})
+		setupLog.Info("Started watching broker for reservation decisions (event-driven)")
 	} else {
 		setupLog.Info("Broker kubeconfig not provided, publishing to broker disabled")
 	}

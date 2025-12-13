@@ -221,3 +221,67 @@ func isTransientError(err error) bool {
 
 	return false
 }
+
+// ReservationEventHandler is called when a reservation event occurs
+type ReservationEventHandler func(eventType string, reservation map[string]interface{})
+
+// WatchReservationsForCluster watches the broker for reservation events where requesterID matches this cluster
+// This provides instant notification when the broker makes a decision (no polling delay)
+func (b *BrokerClient) WatchReservationsForCluster(ctx context.Context, handler ReservationEventHandler) {
+	if !b.Enabled {
+		return
+	}
+
+	// Define GVR for Reservation
+	gvr := schema.GroupVersionResource{
+		Group:    "broker.fluidos.eu",
+		Version:  "v1alpha1",
+		Resource: "reservations",
+	}
+
+	resourceClient := b.Client.Resource(gvr).Namespace("default")
+
+	// Start watching in a goroutine
+	go func() {
+		for {
+			// Create watch
+			watcher, err := resourceClient.Watch(ctx, metav1.ListOptions{})
+			if err != nil {
+				fmt.Printf("Failed to start watch: %v, retrying in 5s...\n", err)
+				time.Sleep(5 * time.Second)
+				continue
+			}
+
+			// Process watch events
+			for event := range watcher.ResultChan() {
+				if event.Object == nil {
+					continue
+				}
+
+				// Convert to unstructured
+				obj, ok := event.Object.(*unstructured.Unstructured)
+				if !ok {
+					continue
+				}
+
+				// Check if requesterID matches our cluster
+				spec, ok := obj.Object["spec"].(map[string]interface{})
+				if !ok {
+					continue
+				}
+
+				requesterID, ok := spec["requesterID"].(string)
+				if !ok || requesterID != b.ClusterID {
+					continue // Not for us
+				}
+
+				// Call handler with event type and reservation data
+				handler(string(event.Type), obj.Object)
+			}
+
+			// Watch channel closed, reconnect after delay
+			fmt.Println("Watch connection closed, reconnecting in 5s...")
+			time.Sleep(5 * time.Second)
+		}
+	}()
+}
