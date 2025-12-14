@@ -62,7 +62,8 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
-	var brokerKubeconfig string // ← Add this line
+	var brokerKubeconfig string
+	var clusterID string
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -81,7 +82,8 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
-	flag.StringVar(&brokerKubeconfig, "broker-kubeconfig", "", "Path to kubeconfig for broker cluster (optional)") // ← Add this line
+	flag.StringVar(&brokerKubeconfig, "broker-kubeconfig", "", "Path to kubeconfig for broker cluster (optional)")
+	flag.StringVar(&clusterID, "cluster-id", "", "Unique ID for this cluster (REQUIRED if broker enabled)")
 
 	opts := zap.Options{
 		Development: true,
@@ -185,14 +187,18 @@ func main() {
 	// Initialize BrokerClient if kubeconfig provided
 	var brokerClient *publisher.BrokerClient
 	if brokerKubeconfig != "" {
-		setupLog.Info("Initializing broker client", "kubeconfig", brokerKubeconfig)
+		if clusterID == "" {
+			setupLog.Error(nil, "cluster-id is required when broker-kubeconfig is provided")
+			os.Exit(1)
+		}
+		setupLog.Info("Initializing broker client", "kubeconfig", brokerKubeconfig, "clusterID", clusterID)
 		var err error
-		brokerClient, err = publisher.NewBrokerClient(brokerKubeconfig, "local-cluster")
+		brokerClient, err = publisher.NewBrokerClient(brokerKubeconfig, clusterID)
 		if err != nil {
 			setupLog.Error(err, "failed to create broker client")
 			os.Exit(1)
 		}
-		setupLog.Info("Broker client initialized successfully")
+		setupLog.Info("Broker client initialized successfully", "clusterID", clusterID)
 
 		// Start watching for reservation decisions from broker (event-driven, no polling!)
 		ctx := ctrl.SetupSignalHandler()
