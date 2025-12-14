@@ -205,6 +205,16 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "Advertisement")
 		os.Exit(1)
 	}
+
+	// Start Reservation Watcher if broker client is available
+	if brokerClient != nil && brokerClient.Enabled {
+		watcher := publisher.NewReservationWatcher(brokerClient)
+		go func() {
+			if err := watcher.Start(ctrl.SetupSignalHandler()); err != nil {
+				setupLog.Error(err, "Reservation watcher failed")
+			}
+		}()
+	}
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
