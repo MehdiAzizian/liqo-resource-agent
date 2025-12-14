@@ -225,6 +225,49 @@ func isTransientError(err error) bool {
 // ReservationEventHandler is called when a reservation event occurs
 type ReservationEventHandler func(eventType string, reservation map[string]interface{})
 
+// CreateReservation creates a reservation request in the broker
+func (b *BrokerClient) CreateReservation(ctx context.Context, cpuNeeded, memoryNeeded string) error {
+	if !b.Enabled {
+		return fmt.Errorf("broker client not enabled")
+	}
+
+	// Define GVR for Reservation
+	gvr := schema.GroupVersionResource{
+		Group:    "broker.fluidos.eu",
+		Version:  "v1alpha1",
+		Resource: "reservations",
+	}
+
+	resourceClient := b.Client.Resource(gvr).Namespace("default")
+
+	// Create reservation with cluster ID as requester
+	reservation := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "broker.fluidos.eu/v1alpha1",
+			"kind":       "Reservation",
+			"metadata": map[string]interface{}{
+				"name":      fmt.Sprintf("%s-reservation-%d", b.ClusterID, time.Now().Unix()),
+				"namespace": "default",
+			},
+			"spec": map[string]interface{}{
+				"requesterID": b.ClusterID, // Automatically use cluster ID
+				"requestedResources": map[string]interface{}{
+					"cpu":    cpuNeeded,
+					"memory": memoryNeeded,
+				},
+				"priority": int64(10),
+			},
+		},
+	}
+
+	_, err := resourceClient.Create(ctx, reservation, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create reservation: %w", err)
+	}
+
+	return nil
+}
+
 // WatchReservationsForCluster watches the broker for reservation events where requesterID matches this cluster
 // This provides instant notification when the broker makes a decision (no polling delay)
 func (b *BrokerClient) WatchReservationsForCluster(ctx context.Context, handler ReservationEventHandler) {

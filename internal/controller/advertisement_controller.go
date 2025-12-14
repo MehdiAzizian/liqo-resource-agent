@@ -110,6 +110,36 @@ func (r *AdvertisementReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		"allocatable-memory", resourceData.Allocatable.Memory.String(),
 		"allocated-memory", resourceData.Allocated.Memory.String())
 
+	// Check if cluster needs resources and automatically create reservation
+	if r.BrokerClient != nil && r.BrokerClient.Enabled {
+		availableCPU := resourceData.Available.CPU.AsApproximateFloat64()
+		availableMemory := resourceData.Available.Memory.AsApproximateFloat64()
+		allocatableCPU := resourceData.Allocatable.CPU.AsApproximateFloat64()
+		allocatableMemory := resourceData.Allocatable.Memory.AsApproximateFloat64()
+
+		// If less than 20% resources available, request more from broker
+		cpuUtilization := 1.0 - (availableCPU / allocatableCPU)
+		memoryUtilization := 1.0 - (availableMemory / allocatableMemory)
+
+		if cpuUtilization > 0.8 || memoryUtilization > 0.8 {
+			// Request 50% of allocatable resources
+			cpuNeeded := fmt.Sprintf("%.0f", allocatableCPU*0.5)
+			memoryNeeded := fmt.Sprintf("%.0fGi", allocatableMemory*0.5/(1024*1024*1024))
+
+			logger.Info("Cluster resources low, creating reservation request",
+				"cpuUtilization", fmt.Sprintf("%.1f%%", cpuUtilization*100),
+				"memoryUtilization", fmt.Sprintf("%.1f%%", memoryUtilization*100),
+				"requesting-cpu", cpuNeeded,
+				"requesting-memory", memoryNeeded)
+
+			if err := r.BrokerClient.CreateReservation(ctx, cpuNeeded, memoryNeeded); err != nil {
+				logger.Error(err, "Failed to create reservation request")
+			} else {
+				logger.Info("Successfully created reservation request in broker")
+			}
+		}
+	}
+
 	// Publish to broker if enabled and track the result
 	published := false
 	publishMessage := "Advertisement updated successfully"
