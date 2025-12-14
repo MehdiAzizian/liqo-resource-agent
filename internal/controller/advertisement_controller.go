@@ -22,6 +22,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -32,7 +33,7 @@ import (
 
 	rearv1alpha1 "github.com/mehdiazizian/liqo-resource-agent/api/v1alpha1"
 	"github.com/mehdiazizian/liqo-resource-agent/internal/metrics"
-	"github.com/mehdiazizian/liqo-resource-agent/internal/publisher" // ← Add this line
+	"github.com/mehdiazizian/liqo-resource-agent/internal/publisher"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -64,6 +65,14 @@ func (r *AdvertisementReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			logger.Info("Advertisement not found, may have been deleted")
 			return ctrl.Result{}, nil
 		}
+
+		// Differentiate transient vs permanent errors
+		if apierrors.IsTimeout(err) || apierrors.IsServerTimeout(err) ||
+			apierrors.IsServiceUnavailable(err) || apierrors.IsInternalError(err) {
+			logger.Error(err, "Transient error getting Advertisement, will retry")
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
+
 		logger.Error(err, "Failed to get Advertisement")
 		return ctrl.Result{}, err
 	}
@@ -101,19 +110,29 @@ func (r *AdvertisementReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		"allocatable-memory", resourceData.Allocatable.Memory.String(),
 		"allocated-memory", resourceData.Allocated.Memory.String())
 
-	// Update status to indicate successful publication
-	result, err := r.updateStatus(ctx, advertisement, "Active", true, "Advertisement updated successfully")
+	// Publish to broker if enabled and track the result
+	published := false
+	publishMessage := "Advertisement updated successfully"
 
-	// Publish to broker if enabled
 	if r.BrokerClient != nil && r.BrokerClient.Enabled {
 		if err := r.BrokerClient.PublishAdvertisement(ctx, advertisement); err != nil {
 			logger.Error(err, "Failed to publish to broker, will retry")
-			// Don't fail the reconciliation, just log the error
+			published = false
+			publishMessage = fmt.Sprintf("Local update successful, but publish failed: %v", err)
+			// Don't fail the reconciliation - will retry on next sync
 		} else {
 			logger.Info("Successfully published to broker")
+			published = true
+			publishMessage = "Advertisement updated and published to broker"
 		}
+	} else {
+		// Broker not configured
+		published = false
+		publishMessage = "Advertisement updated (broker not configured)"
 	}
 
+	// Update status with accurate published state
+	result, err := r.updateStatus(ctx, advertisement, "Active", published, publishMessage)
 	return result, err
 }
 
@@ -186,21 +205,8 @@ func (r *AdvertisementReconciler) findAdvertisementsForNode(ctx context.Context,
 
 // findAdvertisementsForPod triggers reconciliation when pods change
 func (r *AdvertisementReconciler) findAdvertisementsForPod(ctx context.Context, pod client.Object) []reconcile.Request {
-	// Only trigger if pod phase changed or resource requests changed
-	// Reconcile all advertisements
-	advList := &rearv1alpha1.AdvertisementList{}
-	if err := r.List(ctx, advList); err != nil {
-		return []reconcile.Request{}
-	}
-
-	requests := make([]reconcile.Request, len(advList.Items))
-	for i, adv := range advList.Items {
-		requests[i] = reconcile.Request{
-			NamespacedName: types.NamespacedName{
-				Name:      adv.Name,
-				Namespace: adv.Namespace,
-			},
-		}
-	}
-	return requests
+	// Don't trigger on every pod change - rely on 30s periodic sync
+	// This prevents reconciliation storms with thousands of pods
+	// Node changes are more important and trigger full reconciliation
+	return []reconcile.Request{}
 }

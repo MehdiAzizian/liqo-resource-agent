@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -69,13 +72,49 @@ func loadBrokerConfig(kubeconfigPath string) (*rest.Config, error) {
 	return config, nil
 }
 
-// PublishAdvertisement publishes or updates an advertisement in the broker
+// PublishAdvertisement publishes or updates an advertisement in the broker with retry logic
 func (b *BrokerClient) PublishAdvertisement(ctx context.Context, adv *rearv1alpha1.Advertisement) error {
 	if !b.Enabled {
-		// Publishing disabled, skip
 		return nil
 	}
 
+	// Retry with exponential backoff
+	backoff := wait.Backoff{
+		Steps:    4,
+		Duration: 500 * time.Millisecond,
+		Factor:   2.0,
+		Jitter:   0.1,
+	}
+
+	var lastErr error
+	err := wait.ExponentialBackoff(backoff, func() (bool, error) {
+		err := b.publishOnce(ctx, adv)
+		if err == nil {
+			return true, nil // Success
+		}
+
+		// Check if error is transient
+		if isTransientError(err) {
+			lastErr = err
+			return false, nil // Retry
+		}
+
+		// Permanent error
+		return false, err
+	})
+
+	if err != nil {
+		if lastErr != nil {
+			return fmt.Errorf("publish failed after retries: %w", lastErr)
+		}
+		return err
+	}
+
+	return nil
+}
+
+// publishOnce performs a single publish attempt
+func (b *BrokerClient) publishOnce(ctx context.Context, adv *rearv1alpha1.Advertisement) error {
 	// Define the GVR for ClusterAdvertisement
 	gvr := schema.GroupVersionResource{
 		Group:    "broker.fluidos.eu",
@@ -163,4 +202,129 @@ func (b *BrokerClient) PublishAdvertisement(ctx context.Context, adv *rearv1alph
 	}
 
 	return nil
+}
+
+// isTransientError checks if error is temporary and should be retried
+func isTransientError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Kubernetes API errors
+	if apierrors.IsTimeout(err) ||
+		apierrors.IsServerTimeout(err) ||
+		apierrors.IsServiceUnavailable(err) ||
+		apierrors.IsTooManyRequests(err) ||
+		apierrors.IsInternalError(err) {
+		return true
+	}
+
+	return false
+}
+
+// ReservationEventHandler is called when a reservation event occurs
+type ReservationEventHandler func(eventType string, reservation map[string]interface{})
+
+// CreateReservation creates a reservation request in the broker
+func (b *BrokerClient) CreateReservation(ctx context.Context, cpuNeeded, memoryNeeded string) error {
+	if !b.Enabled {
+		return fmt.Errorf("broker client not enabled")
+	}
+
+	// Define GVR for Reservation
+	gvr := schema.GroupVersionResource{
+		Group:    "broker.fluidos.eu",
+		Version:  "v1alpha1",
+		Resource: "reservations",
+	}
+
+	resourceClient := b.Client.Resource(gvr).Namespace("default")
+
+	// Create reservation with cluster ID as requester
+	reservation := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "broker.fluidos.eu/v1alpha1",
+			"kind":       "Reservation",
+			"metadata": map[string]interface{}{
+				"name":      fmt.Sprintf("%s-reservation-%d", b.ClusterID, time.Now().Unix()),
+				"namespace": "default",
+			},
+			"spec": map[string]interface{}{
+				"requesterID": b.ClusterID, // Automatically use cluster ID
+				"requestedResources": map[string]interface{}{
+					"cpu":    cpuNeeded,
+					"memory": memoryNeeded,
+				},
+				"priority": int64(10),
+			},
+		},
+	}
+
+	_, err := resourceClient.Create(ctx, reservation, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create reservation: %w", err)
+	}
+
+	return nil
+}
+
+// WatchReservationsForCluster watches the broker for reservation events where requesterID matches this cluster
+// This provides instant notification when the broker makes a decision (no polling delay)
+func (b *BrokerClient) WatchReservationsForCluster(ctx context.Context, handler ReservationEventHandler) {
+	if !b.Enabled {
+		return
+	}
+
+	// Define GVR for Reservation
+	gvr := schema.GroupVersionResource{
+		Group:    "broker.fluidos.eu",
+		Version:  "v1alpha1",
+		Resource: "reservations",
+	}
+
+	resourceClient := b.Client.Resource(gvr).Namespace("default")
+
+	// Start watching in a goroutine
+	go func() {
+		for {
+			// Create watch
+			watcher, err := resourceClient.Watch(ctx, metav1.ListOptions{})
+			if err != nil {
+				fmt.Printf("Failed to start watch: %v, retrying in 5s...\n", err)
+				time.Sleep(5 * time.Second)
+				continue
+			}
+
+			// Process watch events
+			for event := range watcher.ResultChan() {
+				if event.Object == nil {
+					continue
+				}
+
+				// Convert to unstructured
+				obj, ok := event.Object.(*unstructured.Unstructured)
+				if !ok {
+					continue
+				}
+
+				// Check if requesterID matches our cluster
+				spec, ok := obj.Object["spec"].(map[string]interface{})
+				if !ok {
+					continue
+				}
+
+				requesterID, ok := spec["requesterID"].(string)
+				if !ok || requesterID != b.ClusterID {
+					continue // Not for us
+				}
+
+				// Call handler with event type and reservation data
+				handler(string(event.Type), obj.Object)
+			}
+
+			// Watch channel closed, reconnect after delay
+			fmt.Println("Watch connection closed, reconnecting in 5s...")
+			time.Sleep(5 * time.Second)
+		}
+	}()
 }
