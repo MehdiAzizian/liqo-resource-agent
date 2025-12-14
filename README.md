@@ -1,6 +1,6 @@
 # Kubernetes Resource Agent
 
-A Kubernetes operator that monitors cluster resources in real-time and publishes resource availability for multi-cluster resource brokerage.
+A Kubernetes operator that monitors cluster resources in real-time, publishes availability to a central broker, and **receives reservation instructions** for multi-cluster resource brokerage.
 
 **Master's Thesis Project** - Multi-Cluster Resource Management System
 
@@ -8,46 +8,31 @@ A Kubernetes operator that monitors cluster resources in real-time and publishes
 
 ## Overview
 
-The Resource Agent automatically monitors a Kubernetes cluster's available resources (CPU, Memory, Storage) and publishes this information to a central Resource Broker for intelligent workload distribution across multiple clusters.
+The Resource Agent is the "local" component running in each participating cluster. It has two main responsibilities:
+1.  **Publish:** Automatically monitors the local cluster's available resources (CPU, Memory) and pushes this data to the central Resource Broker.
+2.  **Watch:** Listens for "Reserved" events from the Broker directed at this cluster, enabling the local manager to initiate peering or workload offloading.
 
 ### Key Features
 
 ✅ **Real-time Monitoring**
-- Tracks CPU, Memory, and Storage resources
-- Event-driven updates (<1 second response time)
-- Automatic periodic sync (30 seconds)
+- Tracks CPU and Memory resources
+- Aggregates node capacity and current pod allocations
+- Calculates true "Available" resources
 
-✅ **Automatic Broker Communication**
-- Publishes cluster advertisements to Resource Broker
-- Kubernetes-native authentication
-- Preserves broker-managed resource locks
+✅ **Broker Publishing**
+- Publishes `ClusterAdvertisement` CRs to the central Broker
+- Updates automatically on resource changes or periodically (30s)
 
-✅ **Resource Metrics**
-- **Capacity**: Total physical resources
-- **Allocatable**: Available to workloads
-- **Allocated**: Currently requested
-- **Available**: Free for new workloads
+✅ **Feedback Loop (New)**
+- **Reservation Watcher:** Connects to the Broker and watches for `Reservation` objects.
+- **Requester Awareness:** Filters reservations to only react when `spec.requesterID` matches the local cluster ID.
+- **Notification:** Logs instructions (e.g., "Use Cluster-B for 4 CPU") to trigger downstream actions like Liqo peering.
 
 ---
 
 ## Architecture
-```
-┌─────────────────────────────┐
-│   Kubernetes Cluster        │
-│                             │
-│   Nodes + Pods              │
-│         ↓                   │
-│   Resource Agent            │
-│         ↓                   │
-│   Advertisement (CRD)       │
-└─────────┬───────────────────┘
-          │ HTTPS
-          ↓
-    ┌──────────────┐
-    │    Broker    │
-    │   Cluster    │
-    └──────────────┘
-```
+┌─────────────────────────────┐ │ Kubernetes Cluster │ │ (e.g., "Rome") │ │ │ │ Resource Agent │ │ ┌─────────────────┐ │ │ │ MetricsCollector│ │ │ └────────┬────────┘ │ │ │ 1. Publish │ │ ▼ │ │ ┌─────────────────┐ │ 2. Watch for Reservations │ │ BrokerClient │◄───┼────────────────────────┐ │ └────────┬────────┘ │ (RequesterID="Rome")│ └───────────────┼─────────────┘ │ │ HTTPS │ ▼ │ ┌──────────────┐ │ │ Broker │──────────────────────────────┘ │ Cluster │ └──────────────┘
+
 
 ---
 
@@ -55,112 +40,37 @@ The Resource Agent automatically monitors a Kubernetes cluster's available resou
 
 ### Prerequisites
 - Go 1.23+
-- Kubernetes cluster (tested with kind)
-- kubectl configured
+- Kubernetes cluster
+- `kubectl` configured
+- Access to the **Broker Cluster** (kubeconfig)
 
 ### Installation
-```bash
-# Install CRDs
-make install
 
-# Run locally
-make run
+1. **Install CRDs**
+   ```bash
+   make install
+Run the Agent You must provide the kubeconfig for the central Broker so the Agent can publish advertisements and watch for reservations.
+go run ./cmd/main.go --broker-kubeconfig=/path/to/broker/kubeconfig
+Logs
+You will see logs indicating the agent is watching:
 
-# With broker connection
-go run ./cmd/main.go --broker-kubeconfig=/path/to/broker/config
-```
+INFO    setup    Broker client initialized successfully
+INFO    reservation-watcher    Starting reservation watcher    {"clusterID": "rome-cluster"}
+When a reservation is fulfilled by the Broker:
 
-### View Resources
-```bash
-kubectl get advertisements
-kubectl describe advertisement cluster-advertisement
-```
-
----
-
-## Example Output
-```yaml
-apiVersion: rear.fluidos.eu/v1alpha1
-kind: Advertisement
-metadata:
-  name: cluster-advertisement
-spec:
-  clusterID: "fd32c7d2-7cc6-46e6-80aa-d3d5c835586c"
-  resources:
-    capacity:
-      cpu: "10"
-      memory: "8025424Ki"
-    allocated:
-      cpu: "1050m"
-      memory: "418Mi"
-    available:
-      cpu: "8950m"
-      memory: "7597392Ki"
-```
-
----
-
-## Project Structure
-```
+INFO    reservation-watcher    !!! RESERVATION FULFILLED !!!    {"requester": "rome", "target": "paris", ...}
+INFO    reservation-watcher    Manager Notification: Use paris for 4 CPU, 8Gi Memory
+Project Structure
 liqo-resource-agent/
 ├── api/v1alpha1/          # CRD definitions
-├── cmd/main.go            # Entry point
+├── cmd/main.go            # Entry point (Manager + Watcher)
 ├── internal/
 │   ├── controller/        # Advertisement controller
 │   ├── metrics/           # Resource collector
-│   └── publisher/         # Broker client
+│   └── publisher/         # Broker client & Reservation Watcher
 └── config/                # Kubernetes manifests
-```
-
----
-
-## Development
-
-### Build
-```bash
-make build
-```
-
-### Generate CRDs
-```bash
-make manifests
-```
-
-### Run Tests
-```bash
-make test
-```
-
----
-
-## Configuration
-
-### Command-Line Flags
-
-- `--broker-kubeconfig`: Path to broker cluster kubeconfig (optional)
-- `--health-probe-bind-address`: Health probe address (default: `:8081`)
-- `--metrics-bind-address`: Metrics endpoint (default: `:8080`)
-
----
-
-## Documentation
-
-- [Phase 1 Report](PHASE1_REPORT.md) - Implementation details
-- [Phase 3 Completion](PHASE3_COMPLETE.md) - Communication layer
-- [Quick Reference](QUICKREF.md) - Development guide
-
----
-
-## Related Repository
-
-- [liqo-resource-broker](https://github.com/mehdiazizian/liqo-resource-broker) - Central resource broker
-
----
-
-## License
-
+License
 Apache License 2.0
 
-## Author
-
+Author
 Mehdi Azizian - Master's Thesis Project (2025)
