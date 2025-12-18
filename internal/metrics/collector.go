@@ -3,17 +3,20 @@ package metrics
 import (
 	"context"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	rearv1alpha1 "github.com/mehdiazizian/liqo-resource-agent/api/v1alpha1"
 )
 
 // Collector collects resource metrics from the cluster
 type Collector struct {
-	Client client.Client
+	Client            client.Client
+	ClusterIDOverride string
 }
 
 // CollectClusterResources collects detailed resource information from all nodes
@@ -81,21 +84,31 @@ func (c *Collector) CollectClusterResources(ctx context.Context) (*rearv1alpha1.
 		return nil, fmt.Errorf("failed to calculate allocated resources: %w", err)
 	}
 
-	// Calculate available = allocatable - allocated
+	// Calculate reserved resources from provider instructions
+	reserved, err := c.calculateReservedResources(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to calculate reserved resources: %w", err)
+	}
+
+	// Calculate available = allocatable - allocated - reserved
 	available := &rearv1alpha1.ResourceQuantities{
 		CPU:    allocatable.CPU.DeepCopy(),
 		Memory: allocatable.Memory.DeepCopy(),
 	}
 	available.CPU.Sub(allocated.CPU)
 	available.Memory.Sub(allocated.Memory)
+	available.CPU.Sub(reserved.CPU)
+	available.Memory.Sub(reserved.Memory)
 
-	if hasGPU && allocated.GPU != nil {
+	if hasGPU && allocatable.GPU != nil {
 		availableGPU := allocatable.GPU.DeepCopy()
-		availableGPU.Sub(*allocated.GPU)
+		if allocated.GPU != nil {
+			availableGPU.Sub(*allocated.GPU)
+		}
+		if reserved.GPU != nil {
+			availableGPU.Sub(*reserved.GPU)
+		}
 		available.GPU = &availableGPU
-	} else if hasGPU {
-		gpuCopy := allocatable.GPU.DeepCopy()
-		available.GPU = &gpuCopy
 	}
 
 	return &rearv1alpha1.ResourceMetrics{
@@ -123,22 +136,78 @@ func (c *Collector) calculateAllocatedResources(ctx context.Context) (*rearv1alp
 	hasGPU := false
 
 	for _, pod := range podList.Items {
-		// Only count pods that are running or pending
 		if pod.Status.Phase != corev1.PodRunning && pod.Status.Phase != corev1.PodPending {
 			continue
 		}
 
+		containersCPU := resource.NewQuantity(0, resource.DecimalSI)
+		containersMemory := resource.NewQuantity(0, resource.BinarySI)
+		containersGPU := resource.NewQuantity(0, resource.DecimalSI)
+
+		initCPUMax := resource.NewQuantity(0, resource.DecimalSI)
+		initMemoryMax := resource.NewQuantity(0, resource.BinarySI)
+		initGPUMax := resource.NewQuantity(0, resource.DecimalSI)
+
 		for _, container := range pod.Spec.Containers {
-			// Sum CPU requests
 			if cpu, ok := container.Resources.Requests[corev1.ResourceCPU]; ok {
+				containersCPU.Add(cpu)
+			}
+			if memory, ok := container.Resources.Requests[corev1.ResourceMemory]; ok {
+				containersMemory.Add(memory)
+			}
+			if gpu, ok := container.Resources.Requests["nvidia.com/gpu"]; ok {
+				containersGPU.Add(gpu)
+				hasGPU = true
+			}
+		}
+
+		for _, initContainer := range pod.Spec.InitContainers {
+			if cpu, ok := initContainer.Resources.Requests[corev1.ResourceCPU]; ok {
+				if cpu.Cmp(*initCPUMax) > 0 {
+					*initCPUMax = cpu.DeepCopy()
+				}
+			}
+			if memory, ok := initContainer.Resources.Requests[corev1.ResourceMemory]; ok {
+				if memory.Cmp(*initMemoryMax) > 0 {
+					*initMemoryMax = memory.DeepCopy()
+				}
+			}
+			if gpu, ok := initContainer.Resources.Requests["nvidia.com/gpu"]; ok {
+				if gpu.Cmp(*initGPUMax) > 0 {
+					*initGPUMax = gpu.DeepCopy()
+				}
+				hasGPU = true
+			}
+		}
+
+		cpuContribution := containersCPU.DeepCopy()
+		if initCPUMax.Cmp(cpuContribution) > 0 {
+			cpuContribution = initCPUMax.DeepCopy()
+		}
+		allocated.CPU.Add(cpuContribution)
+
+		memoryContribution := containersMemory.DeepCopy()
+		if initMemoryMax.Cmp(memoryContribution) > 0 {
+			memoryContribution = initMemoryMax.DeepCopy()
+		}
+		allocated.Memory.Add(memoryContribution)
+
+		if hasGPU {
+			gpuContribution := containersGPU.DeepCopy()
+			if initGPUMax.Cmp(gpuContribution) > 0 {
+				gpuContribution = initGPUMax.DeepCopy()
+			}
+			allocatedGPU.Add(gpuContribution)
+		}
+
+		if pod.Spec.Overhead != nil {
+			if cpu, ok := pod.Spec.Overhead[corev1.ResourceCPU]; ok {
 				allocated.CPU.Add(cpu)
 			}
-			// Sum Memory requests
-			if memory, ok := container.Resources.Requests[corev1.ResourceMemory]; ok {
+			if memory, ok := pod.Spec.Overhead[corev1.ResourceMemory]; ok {
 				allocated.Memory.Add(memory)
 			}
-			// Sum GPU requests
-			if gpu, ok := container.Resources.Requests["nvidia.com/gpu"]; ok {
+			if gpu, ok := pod.Spec.Overhead["nvidia.com/gpu"]; ok {
 				allocatedGPU.Add(gpu)
 				hasGPU = true
 			}
@@ -150,6 +219,77 @@ func (c *Collector) calculateAllocatedResources(ctx context.Context) (*rearv1alp
 	}
 
 	return allocated, nil
+}
+
+// calculateReservedResources sums up resources reserved by provider instructions
+func (c *Collector) calculateReservedResources(ctx context.Context) (*rearv1alpha1.ResourceQuantities, error) {
+	logger := log.FromContext(ctx).WithName("metrics-collector")
+
+	providerInstructionList := &rearv1alpha1.ProviderInstructionList{}
+	if err := c.Client.List(ctx, providerInstructionList); err != nil {
+		return nil, fmt.Errorf("failed to list provider instructions: %w", err)
+	}
+
+	reserved := &rearv1alpha1.ResourceQuantities{
+		CPU:    *resource.NewQuantity(0, resource.DecimalSI),
+		Memory: *resource.NewQuantity(0, resource.BinarySI),
+	}
+
+	var reservedGPU resource.Quantity
+	hasGPU := false
+	now := time.Now()
+
+	for _, instruction := range providerInstructionList.Items {
+		// Only count enforced instructions that haven't expired
+		if !instruction.Status.Enforced {
+			continue
+		}
+
+		// Skip expired instructions
+		if instruction.Spec.ExpiresAt != nil && instruction.Spec.ExpiresAt.Time.Before(now) {
+			continue
+		}
+
+		// Parse CPU
+		if instruction.Spec.RequestedCPU != "" {
+			cpuQuantity, err := resource.ParseQuantity(instruction.Spec.RequestedCPU)
+			if err != nil {
+				logger.Error(err, "failed to parse CPU from provider instruction",
+					"instruction", instruction.Name,
+					"cpu", instruction.Spec.RequestedCPU)
+				continue
+			}
+			reserved.CPU.Add(cpuQuantity)
+		}
+
+		// Parse Memory
+		if instruction.Spec.RequestedMemory != "" {
+			memQuantity, err := resource.ParseQuantity(instruction.Spec.RequestedMemory)
+			if err != nil {
+				logger.Error(err, "failed to parse memory from provider instruction",
+					"instruction", instruction.Name,
+					"memory", instruction.Spec.RequestedMemory)
+				continue
+			}
+			reserved.Memory.Add(memQuantity)
+		}
+
+		// GPU support (if added later to ProviderInstruction)
+		// For now, skip GPU handling in provider instructions
+	}
+
+	if hasGPU {
+		reserved.GPU = &reservedGPU
+	}
+
+	if reserved.CPU.Sign() > 0 || reserved.Memory.Sign() > 0 {
+		logger.Info("calculated reserved resources from provider instructions",
+			"reservedCPU", reserved.CPU.String(),
+			"reservedMemory", reserved.Memory.String(),
+			"instructionCount", len(providerInstructionList.Items))
+	}
+
+	return reserved, nil
 }
 
 // isNodeReady checks if a node is in Ready condition
@@ -164,6 +304,9 @@ func isNodeReady(node *corev1.Node) bool {
 
 // GetClusterID generates or retrieves a cluster identifier
 func (c *Collector) GetClusterID(ctx context.Context) (string, error) {
+	if c.ClusterIDOverride != "" {
+		return c.ClusterIDOverride, nil
+	}
 	ns := &corev1.Namespace{}
 	if err := c.Client.Get(ctx, client.ObjectKey{Name: "kube-system"}, ns); err != nil {
 		return "", fmt.Errorf("failed to get kube-system namespace: %w", err)

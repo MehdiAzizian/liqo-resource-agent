@@ -21,10 +21,11 @@ type BrokerClient struct {
 	Client    dynamic.Interface
 	ClusterID string
 	Enabled   bool
+	Namespace string
 }
 
 // NewBrokerClient creates a new broker client using dynamic client
-func NewBrokerClient(brokerKubeconfig, clusterID string) (*BrokerClient, error) {
+func NewBrokerClient(brokerKubeconfig, clusterID, namespace string) (*BrokerClient, error) {
 	// Check if broker publishing is enabled
 	if brokerKubeconfig == "" {
 		return &BrokerClient{
@@ -48,6 +49,7 @@ func NewBrokerClient(brokerKubeconfig, clusterID string) (*BrokerClient, error) 
 		Client:    dynamicClient,
 		ClusterID: clusterID,
 		Enabled:   true,
+		Namespace: namespace,
 	}, nil
 }
 
@@ -83,24 +85,21 @@ func (b *BrokerClient) PublishAdvertisement(ctx context.Context, adv *rearv1alph
 		Resource: "clusteradvertisements",
 	}
 
-	resourceClient := b.Client.Resource(gvr).Namespace("default")
+	namespace := b.Namespace
+	if namespace == "" {
+		namespace = "default"
+	}
+	resourceClient := b.Client.Resource(gvr).Namespace(namespace)
 
-	// Try to get existing to preserve Reserved field
+	// Try to get existing advertisement to preserve resourceVersion for optimistic concurrency
 	existing, err := resourceClient.Get(ctx, fmt.Sprintf("%s-adv", b.ClusterID), metav1.GetOptions{})
 
-	var reservedResources map[string]interface{}
-	if err == nil && existing != nil {
-		// Preserve existing reserved resources
-		if spec, ok := existing.Object["spec"].(map[string]interface{}); ok {
-			if resources, ok := spec["resources"].(map[string]interface{}); ok {
-				if reserved, ok := resources["reserved"].(map[string]interface{}); ok {
-					reservedResources = reserved
-				}
-			}
-		}
-	}
-
 	// Build resources spec
+	// Note: We publish Capacity, Allocatable, Allocated, and Available.
+	// The Available value already accounts for locally reserved resources (via ProviderInstructions).
+	// The broker manages its own Reserved field independently for immediate resource locking.
+	// The broker's ClusterAdvertisementReconciler will recalculate Available using the fresh
+	// Allocatable/Allocated we provide here, combined with its own Reserved tracking.
 	resourcesSpec := map[string]interface{}{
 		"capacity": map[string]interface{}{
 			"cpu":    adv.Spec.Resources.Capacity.CPU.String(),
@@ -120,9 +119,16 @@ func (b *BrokerClient) PublishAdvertisement(ctx context.Context, adv *rearv1alph
 		},
 	}
 
-	// Add reserved if it existed
-	if reservedResources != nil {
-		resourcesSpec["reserved"] = reservedResources
+	// Preserve the broker's Reserved field if it exists
+	// The broker manages reservations independently, so we must not overwrite its Reserved tracking
+	if err == nil && existing != nil {
+		if existingSpec, ok := existing.Object["spec"].(map[string]interface{}); ok {
+			if existingResources, ok := existingSpec["resources"].(map[string]interface{}); ok {
+				if reserved, hasReserved := existingResources["reserved"]; hasReserved {
+					resourcesSpec["reserved"] = reserved
+				}
+			}
+		}
 	}
 
 	// Convert to unstructured
@@ -132,7 +138,7 @@ func (b *BrokerClient) PublishAdvertisement(ctx context.Context, adv *rearv1alph
 			"kind":       "ClusterAdvertisement",
 			"metadata": map[string]interface{}{
 				"name":      fmt.Sprintf("%s-adv", b.ClusterID),
-				"namespace": "default",
+				"namespace": namespace,
 			},
 			"spec": map[string]interface{}{
 				"clusterID":   adv.Spec.ClusterID,

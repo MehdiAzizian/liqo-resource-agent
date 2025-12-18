@@ -41,7 +41,9 @@ type AdvertisementReconciler struct {
 	client.Client
 	Scheme           *runtime.Scheme
 	MetricsCollector *metrics.Collector
-	BrokerClient     *publisher.BrokerClient // ← Add this line
+	BrokerClient     *publisher.BrokerClient
+	TargetKey        types.NamespacedName
+	RequeueInterval  time.Duration // Configurable requeue interval
 }
 
 // +kubebuilder:rbac:groups=rear.fluidos.eu,resources=advertisements,verbs=get;list;watch;create;update;patch;delete
@@ -53,32 +55,37 @@ type AdvertisementReconciler struct {
 // Reconcile is part of the main kubernetes reconciliation loop
 func (r *AdvertisementReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-	logger.Info("Reconciling Advertisement", "name", req.Name, "namespace", req.Namespace)
+	logger.Info("reconciling advertisement",
+		"name", req.Name,
+		"namespace", req.Namespace)
 
 	// Fetch the Advertisement instance
 	advertisement := &rearv1alpha1.Advertisement{}
 	err := r.Get(ctx, req.NamespacedName, advertisement)
 	if err != nil {
 		if client.IgnoreNotFound(err) == nil {
-			// Advertisement not found, could have been deleted
-			logger.Info("Advertisement not found, may have been deleted")
+			logger.Info("advertisement not found, may have been deleted",
+				"name", req.Name,
+				"namespace", req.Namespace)
 			return ctrl.Result{}, nil
 		}
-		logger.Error(err, "Failed to get Advertisement")
+		logger.Error(err, "failed to get advertisement",
+			"name", req.Name,
+			"namespace", req.Namespace)
 		return ctrl.Result{}, err
 	}
 
 	// Collect current cluster metrics
 	resourceData, err := r.MetricsCollector.CollectClusterResources(ctx)
 	if err != nil {
-		logger.Error(err, "Failed to collect cluster resources")
+		logger.Error(err, "failed to collect cluster resources")
 		return r.updateStatus(ctx, advertisement, "Error", false, fmt.Sprintf("Failed to collect metrics: %v", err))
 	}
 
 	// Get cluster ID
 	clusterID, err := r.MetricsCollector.GetClusterID(ctx)
 	if err != nil {
-		logger.Error(err, "Failed to get cluster ID")
+		logger.Error(err, "failed to get cluster ID")
 		return r.updateStatus(ctx, advertisement, "Error", false, fmt.Sprintf("Failed to get cluster ID: %v", err))
 	}
 
@@ -89,17 +96,21 @@ func (r *AdvertisementReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	// Update the Advertisement resource
 	if err := r.Update(ctx, advertisement); err != nil {
-		logger.Error(err, "Failed to update Advertisement spec")
+		logger.Error(err, "failed to update advertisement spec",
+			"name", advertisement.Name,
+			"namespace", advertisement.Namespace)
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("Updated Advertisement with current metrics",
-		"capacity-cpu", resourceData.Capacity.CPU.String(),
-		"allocatable-cpu", resourceData.Allocatable.CPU.String(),
-		"allocated-cpu", resourceData.Allocated.CPU.String(),
-		"available-cpu", resourceData.Available.CPU.String(),
-		"allocatable-memory", resourceData.Allocatable.Memory.String(),
-		"allocated-memory", resourceData.Allocated.Memory.String())
+	logger.Info("updated advertisement with current metrics",
+		"clusterID", clusterID,
+		"capacityCPU", resourceData.Capacity.CPU.String(),
+		"allocatableCPU", resourceData.Allocatable.CPU.String(),
+		"allocatedCPU", resourceData.Allocated.CPU.String(),
+		"availableCPU", resourceData.Available.CPU.String(),
+		"allocatableMemory", resourceData.Allocatable.Memory.String(),
+		"allocatedMemory", resourceData.Allocated.Memory.String(),
+		"availableMemory", resourceData.Available.Memory.String())
 
 	// Update status to indicate successful publication
 	result, err := r.updateStatus(ctx, advertisement, "Active", true, "Advertisement updated successfully")
@@ -107,10 +118,13 @@ func (r *AdvertisementReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// Publish to broker if enabled
 	if r.BrokerClient != nil && r.BrokerClient.Enabled {
 		if err := r.BrokerClient.PublishAdvertisement(ctx, advertisement); err != nil {
-			logger.Error(err, "Failed to publish to broker, will retry")
+			logger.Error(err, "failed to publish to broker, will retry",
+				"clusterID", clusterID)
 			// Don't fail the reconciliation, just log the error
 		} else {
-			logger.Info("Successfully published to broker")
+			logger.Info("successfully published to broker",
+				"clusterID", clusterID,
+				"advertisementName", advertisement.Name)
 		}
 	}
 
@@ -133,22 +147,28 @@ func (r *AdvertisementReconciler) updateStatus(
 	advertisement.Status.LastUpdateTime = metav1.Now()
 
 	if err := r.Status().Update(ctx, advertisement); err != nil {
-		logger.Error(err, "Failed to update Advertisement status")
+		logger.Error(err, "failed to update advertisement status",
+			"name", advertisement.Name,
+			"namespace", advertisement.Namespace,
+			"phase", phase)
 		return ctrl.Result{}, err
 	}
 
-	// Requeue after 30 seconds for periodic updates
-	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	// Requeue for periodic updates
+	requeueInterval := r.RequeueInterval
+	if requeueInterval == 0 {
+		requeueInterval = 30 * time.Second // Default if not configured
+	}
+	return ctrl.Result{RequeueAfter: requeueInterval}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager
 func (r *AdvertisementReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Initialize metrics collector if not set
 	if r.MetricsCollector == nil {
-		r.MetricsCollector = &metrics.Collector{
-			Client: r.Client,
-		}
+		r.MetricsCollector = &metrics.Collector{}
 	}
+	r.MetricsCollector.Client = r.Client
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&rearv1alpha1.Advertisement{}).
@@ -166,41 +186,16 @@ func (r *AdvertisementReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 // findAdvertisementsForNode triggers reconciliation when nodes change
 func (r *AdvertisementReconciler) findAdvertisementsForNode(ctx context.Context, node client.Object) []reconcile.Request {
-	// Reconcile all advertisements when any node changes
-	advList := &rearv1alpha1.AdvertisementList{}
-	if err := r.List(ctx, advList); err != nil {
-		return []reconcile.Request{}
+	if r.TargetKey.Name == "" {
+		return nil
 	}
-
-	requests := make([]reconcile.Request, len(advList.Items))
-	for i, adv := range advList.Items {
-		requests[i] = reconcile.Request{
-			NamespacedName: types.NamespacedName{
-				Name:      adv.Name,
-				Namespace: adv.Namespace,
-			},
-		}
-	}
-	return requests
+	return []reconcile.Request{{NamespacedName: r.TargetKey}}
 }
 
 // findAdvertisementsForPod triggers reconciliation when pods change
 func (r *AdvertisementReconciler) findAdvertisementsForPod(ctx context.Context, pod client.Object) []reconcile.Request {
-	// Only trigger if pod phase changed or resource requests changed
-	// Reconcile all advertisements
-	advList := &rearv1alpha1.AdvertisementList{}
-	if err := r.List(ctx, advList); err != nil {
-		return []reconcile.Request{}
+	if r.TargetKey.Name == "" {
+		return nil
 	}
-
-	requests := make([]reconcile.Request, len(advList.Items))
-	for i, adv := range advList.Items {
-		requests[i] = reconcile.Request{
-			NamespacedName: types.NamespacedName{
-				Name:      adv.Name,
-				Namespace: adv.Namespace,
-			},
-		}
-	}
-	return requests
+	return []reconcile.Request{{NamespacedName: r.TargetKey}}
 }

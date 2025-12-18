@@ -26,7 +26,8 @@ The Resource Agent is the "local" component running in each participating cluste
 ✅ **Feedback Loop (New)**
 - **Reservation Watcher:** Connects to the Broker and watches for `Reservation` objects.
 - **Requester Awareness:** Filters reservations to only react when `spec.requesterID` matches the local cluster ID.
-- **Notification:** Logs instructions (e.g., "Use Cluster-B for 4 CPU") to trigger downstream actions like Liqo peering.
+- **Provider Awareness:** Also reacts when `spec.targetClusterID` equals the local cluster to signal that this cluster must keep capacity aside.
+- **Notifications:** Persists a `ReservationInstruction` (requester view) and a `ProviderInstruction` (provider view) CR in the local cluster so automation can react to either responsibility without scraping stdout.
 
 ---
 
@@ -49,8 +50,15 @@ The Resource Agent is the "local" component running in each participating cluste
 1. **Install CRDs**
    ```bash
    make install
+   ```
 Run the Agent You must provide the kubeconfig for the central Broker so the Agent can publish advertisements and watch for reservations.
-go run ./cmd/main.go --broker-kubeconfig=/path/to/broker/kubeconfig
+```bash
+go run ./cmd/main.go \
+  --broker-kubeconfig=/path/to/broker/kubeconfig \
+  --advertisement-name=cluster-advertisement \
+  --advertisement-namespace=default
+```
+> Optional flags: `--cluster-id` (override kube-system UID), `--broker-namespace` (if broker CRDs live outside `default`), `--instruction-namespace` to store `ReservationInstruction` CRs elsewhere.
 Logs
 You will see logs indicating the agent is watching:
 
@@ -60,6 +68,9 @@ When a reservation is fulfilled by the Broker:
 
 INFO    reservation-watcher    !!! RESERVATION FULFILLED !!!    {"requester": "rome", "target": "paris", ...}
 INFO    reservation-watcher    Manager Notification: Use paris for 4 CPU, 8Gi Memory
+INFO    reservation-watcher    Created ReservationInstruction   {"name": "rome-request", "namespace": "default"}
+INFO    reservation-watcher    Provider reservation received    {"reservation": "rome-request", "requester": "rome"}
+INFO    providerinstruction    Enforcing provider instruction   {"reservation": "rome-request", "requester": "rome"}
 Project Structure
 liqo-resource-agent/
 ├── api/v1alpha1/          # CRD definitions
