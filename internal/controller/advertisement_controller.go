@@ -102,15 +102,18 @@ func (r *AdvertisementReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("updated advertisement with current metrics",
-		"clusterID", clusterID,
-		"capacityCPU", resourceData.Capacity.CPU.String(),
-		"allocatableCPU", resourceData.Allocatable.CPU.String(),
-		"allocatedCPU", resourceData.Allocated.CPU.String(),
-		"availableCPU", resourceData.Available.CPU.String(),
-		"allocatableMemory", resourceData.Allocatable.Memory.String(),
-		"allocatedMemory", resourceData.Allocated.Memory.String(),
-		"availableMemory", resourceData.Available.Memory.String())
+	// Log with better readability - single message with newlines
+	logger.Info(fmt.Sprintf("📊 Advertisement updated\n"+
+		"  └─ Cluster: %s\n"+
+		"  └─ CPU: allocatable=%s, allocated=%s, available=%s\n"+
+		"  └─ Memory: allocatable=%s, allocated=%s, available=%s",
+		clusterID,
+		resourceData.Allocatable.CPU.String(),
+		resourceData.Allocated.CPU.String(),
+		resourceData.Available.CPU.String(),
+		resourceData.Allocatable.Memory.String(),
+		resourceData.Allocated.Memory.String(),
+		resourceData.Available.Memory.String()))
 
 	// Update status to indicate successful publication
 	result, err := r.updateStatus(ctx, advertisement, "Active", true, "Advertisement updated successfully")
@@ -118,13 +121,10 @@ func (r *AdvertisementReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// Publish to broker if enabled
 	if r.BrokerClient != nil && r.BrokerClient.Enabled {
 		if err := r.BrokerClient.PublishAdvertisement(ctx, advertisement); err != nil {
-			logger.Error(err, "failed to publish to broker, will retry",
-				"clusterID", clusterID)
+			logger.Error(err, fmt.Sprintf("❌ Failed to publish to broker (will retry)\n  └─ Cluster: %s", clusterID))
 			// Don't fail the reconciliation, just log the error
 		} else {
-			logger.Info("successfully published to broker",
-				"clusterID", clusterID,
-				"advertisementName", advertisement.Name)
+			logger.Info(fmt.Sprintf("✅ Published to broker successfully\n  └─ Cluster: %s", clusterID))
 		}
 	}
 
@@ -154,12 +154,49 @@ func (r *AdvertisementReconciler) updateStatus(
 		return ctrl.Result{}, err
 	}
 
-	// Requeue for periodic updates
+	// Calculate time until next clock-synchronized update
+	// This ensures all agents publish at the same clock time (e.g., 14:35:00, 14:36:00)
 	requeueInterval := r.RequeueInterval
 	if requeueInterval == 0 {
-		requeueInterval = 30 * time.Second // Default if not configured
+		requeueInterval = 1 * time.Minute // Default: 1 minute
 	}
-	return ctrl.Result{RequeueAfter: requeueInterval}, nil
+
+	nextUpdate := calculateNextClockSync(time.Now(), requeueInterval)
+	waitDuration := time.Until(nextUpdate)
+
+	logger.Info("scheduled next advertisement update",
+		"nextUpdate", nextUpdate.Format("15:04:05"),
+		"waitDuration", waitDuration.Round(time.Second))
+
+	return ctrl.Result{RequeueAfter: waitDuration}, nil
+}
+
+// calculateNextClockSync calculates the next clock-synchronized time
+// For 1-minute interval: returns next minute boundary (e.g., 14:35:00, 14:36:00)
+// For other intervals: aligns to nearest interval boundary
+func calculateNextClockSync(now time.Time, interval time.Duration) time.Time {
+	// Round interval to nearest minute for simplicity
+	intervalMinutes := int(interval.Minutes())
+	if intervalMinutes < 1 {
+		intervalMinutes = 1
+	}
+
+	// Calculate next aligned minute
+	currentMinute := now.Minute()
+	nextMinute := ((currentMinute / intervalMinutes) + 1) * intervalMinutes
+
+	// Build next sync time
+	nextSync := time.Date(
+		now.Year(), now.Month(), now.Day(),
+		now.Hour(), nextMinute%60, 0, 0, now.Location(),
+	)
+
+	// If we rolled over to next hour
+	if nextMinute >= 60 {
+		nextSync = nextSync.Add(time.Hour)
+	}
+
+	return nextSync
 }
 
 // SetupWithManager sets up the controller with the Manager

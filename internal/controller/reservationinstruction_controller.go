@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -71,13 +72,17 @@ func (r *ReservationInstructionReconciler) Reconcile(ctx context.Context, req ct
 	}
 
 	// Process the instruction - this is where Liqo peering would be triggered in production
-	logger.Info("reservation instruction received - resources available in target cluster",
-		"reservation", instruction.Spec.ReservationName,
-		"targetCluster", instruction.Spec.TargetClusterID,
-		"requestedCPU", instruction.Spec.RequestedCPU,
-		"requestedMemory", instruction.Spec.RequestedMemory,
-		"message", instruction.Spec.Message,
-		"action", "ready-to-offload-workload")
+	logger.Info(fmt.Sprintf("🎯 Reservation Instruction Received\n"+
+		"  └─ Reservation: %s\n"+
+		"  └─ Target Cluster: %s\n"+
+		"  └─ Resources: cpu=%s, memory=%s\n"+
+		"  └─ Message: %s\n"+
+		"  └─ Action: ready-to-offload-workload",
+		instruction.Spec.ReservationName,
+		instruction.Spec.TargetClusterID,
+		instruction.Spec.RequestedCPU,
+		instruction.Spec.RequestedMemory,
+		instruction.Spec.Message))
 
 	// In a production system with Liqo integration, here you would:
 	// 1. Trigger Liqo peering with the target cluster

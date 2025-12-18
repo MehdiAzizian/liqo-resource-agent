@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -68,12 +69,19 @@ func (r *ProviderInstructionReconciler) Reconcile(ctx context.Context, req ctrl.
 	}
 
 	// Mark as enforced
-	logger.Info("enforcing provider instruction",
-		"reservation", instruction.Spec.ReservationName,
-		"requester", instruction.Spec.RequesterClusterID,
-		"cpu", instruction.Spec.RequestedCPU,
-		"memory", instruction.Spec.RequestedMemory,
-		"expiresAt", instruction.Spec.ExpiresAt)
+	expiryInfo := ""
+	if instruction.Spec.ExpiresAt != nil {
+		expiryInfo = fmt.Sprintf("\n  └─ Expiration: %s", instruction.Spec.ExpiresAt.Format("15:04:05"))
+	}
+	logger.Info(fmt.Sprintf("🔒 Provider Instruction Received\n"+
+		"  └─ Reservation: %s\n"+
+		"  └─ Requester Cluster: %s\n"+
+		"  └─ Resources: cpu=%s, memory=%s%s",
+		instruction.Spec.ReservationName,
+		instruction.Spec.RequesterClusterID,
+		instruction.Spec.RequestedCPU,
+		instruction.Spec.RequestedMemory,
+		expiryInfo))
 
 	instruction.Status.Enforced = true
 	instruction.Status.LastUpdateTime = metav1.Now()
