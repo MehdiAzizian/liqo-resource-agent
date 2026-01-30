@@ -63,6 +63,16 @@ spec:
         args:
           - --leader-elect
           - --health-probe-bind-address=:8081
+          # =============================================================
+          # Transport configuration - must match broker's --broker-interface
+          # =============================================================
+          - --broker-transport=http
+          - --broker-url=https://liqo-resource-broker.system.svc:8443
+          - --broker-cert-path=/etc/agent/certs
+          # Cluster ID is extracted from certificate CN, but can be overridden:
+          # - --cluster-id=cluster-1
+          - --advertisement-namespace=system
+          - --instruction-namespace=system
         image: controller:latest
         name: manager
         ports: []
@@ -93,7 +103,16 @@ spec:
           requests:
             cpu: 10m
             memory: 64Mi
-        volumeMounts: []
-      volumes: []
+        volumeMounts:
+          # Mount TLS certificates from cert-manager Secret
+          - name: agent-certs
+            mountPath: /etc/agent/certs
+            readOnly: true
+      volumes:
+        # TLS certificates created by cert-manager (see config/certmanager/)
+        - name: agent-certs
+          secret:
+            secretName: agent-client-tls
+            # Expected keys: tls.crt, tls.key, ca.crt
       serviceAccountName: controller-manager
       terminationGracePeriodSeconds: 10

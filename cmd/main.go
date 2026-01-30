@@ -20,12 +20,15 @@ import (
 	"context"
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"os"
 	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	"github.com/mehdiazizian/liqo-resource-agent/internal/publisher" // ← Add this
+	"github.com/mehdiazizian/liqo-resource-agent/internal/transport"
+	transporthttp "github.com/mehdiazizian/liqo-resource-agent/internal/transport/http"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -72,6 +75,9 @@ func main() {
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
 	var brokerKubeconfig string // ← Add this line
+	var brokerTransport string
+	var brokerURL string
+	var brokerCertPath string
 	var clusterIDFlag string
 	var advertisementName string
 	var advertisementNamespace string
@@ -97,6 +103,9 @@ func main() {
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.StringVar(&brokerKubeconfig, "broker-kubeconfig", "", "Path to kubeconfig for broker cluster (optional)") // ← Add this line
+	flag.StringVar(&brokerTransport, "broker-transport", "", "Transport protocol for broker communication (http|kubernetes, empty disables broker)")
+	flag.StringVar(&brokerURL, "broker-url", "", "Broker URL for HTTP transport (e.g., https://broker.example.com:8443)")
+	flag.StringVar(&brokerCertPath, "broker-cert-path", "", "Client certificate path for HTTP transport")
 	flag.StringVar(&clusterIDFlag, "cluster-id", "", "Optional override for the agent cluster ID")
 	flag.StringVar(&advertisementName, "advertisement-name", "cluster-advertisement", "Advertisement resource name")
 	flag.StringVar(&advertisementNamespace, "advertisement-namespace", "default", "Advertisement namespace")
@@ -233,19 +242,74 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Initialize BrokerClient if kubeconfig provided
+	// =============================================================================
+	// AGENT TRANSPORT SELECTION
+	// =============================================================================
+	// The agent uses ONE transport protocol to communicate with the broker,
+	// selected by --broker-transport flag. Must match broker's --broker-interface.
+	//
+	// HINT: To enable MULTIPLE transports simultaneously (e.g., failover scenarios),
+	// create multiple communicators and use them based on availability:
+	//
+	//   var communicators []transport.BrokerCommunicator
+	//   if httpEnabled {
+	//       httpComm, _ := NewCommunicator("http", ...)
+	//       communicators = append(communicators, httpComm)
+	//   }
+	//   if mqttEnabled {
+	//       mqttComm, _ := NewCommunicator("mqtt", ...)
+	//       communicators = append(communicators, mqttComm)
+	//   }
+	//   // Use first available, or implement failover logic
+	//
+	// =============================================================================
+
 	var brokerClient *publisher.BrokerClient
-	if brokerKubeconfig != "" {
-		setupLog.Info("Initializing broker client", "kubeconfig", brokerKubeconfig)
-		var err error
-		brokerClient, err = publisher.NewBrokerClient(brokerKubeconfig, clusterID, brokerNamespace)
-		if err != nil {
-			setupLog.Error(err, "failed to create broker client")
+	var brokerCommunicator transport.BrokerCommunicator
+
+	// Support legacy kubeconfig flag (maps to kubernetes transport)
+	if brokerKubeconfig != "" && brokerTransport == "" {
+		brokerTransport = "kubernetes"
+	}
+
+	if brokerTransport != "" {
+		setupLog.Info("Initializing broker communicator",
+			"transport", brokerTransport,
+			"clusterID", clusterID)
+
+		switch brokerTransport {
+		case "http":
+			var err error
+			brokerCommunicator, err = NewCommunicator(
+				brokerTransport,
+				brokerURL,
+				brokerKubeconfig,
+				brokerCertPath,
+				clusterID,
+			)
+			if err != nil {
+				setupLog.Error(err, "failed to create HTTP broker communicator")
+				os.Exit(1)
+			}
+			setupLog.Info("HTTP broker communicator initialized successfully",
+				"brokerURL", brokerURL)
+
+		case "kubernetes":
+			// Legacy Kubernetes transport using BrokerClient
+			var err error
+			brokerClient, err = publisher.NewBrokerClient(brokerKubeconfig, clusterID, brokerNamespace)
+			if err != nil {
+				setupLog.Error(err, "failed to create broker client")
+				os.Exit(1)
+			}
+			setupLog.Info("Kubernetes broker client initialized successfully")
+
+		default:
+			setupLog.Error(nil, "Unknown broker transport", "transport", brokerTransport)
 			os.Exit(1)
 		}
-		setupLog.Info("Broker client initialized successfully")
 	} else {
-		setupLog.Info("Broker kubeconfig not provided, publishing to broker disabled")
+		setupLog.Info("Broker transport not specified, broker communication disabled")
 	}
 
 	if err = (&controller.AdvertisementReconciler{
@@ -254,8 +318,9 @@ func main() {
 		MetricsCollector: &metrics.Collector{
 			ClusterIDOverride: clusterID,
 		},
-		BrokerClient:    brokerClient,
-		RequeueInterval: advertisementRequeueInterval,
+		BrokerClient:       brokerClient,       // Legacy Kubernetes transport
+		BrokerCommunicator: brokerCommunicator, // New transport abstraction (HTTP)
+		RequeueInterval:    advertisementRequeueInterval,
 		TargetKey: types.NamespacedName{
 			Name:      advertisementName,
 			Namespace: advertisementNamespace,
@@ -281,7 +346,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Start Reservation Watcher if broker client is available
+	// Start Reservation Watcher if broker client is available (Kubernetes transport)
 	if brokerClient != nil && brokerClient.Enabled {
 		watcher := publisher.NewReservationWatcher(brokerClient, mgr.GetClient(), instructionNamespace)
 		go func() {
@@ -289,6 +354,23 @@ func main() {
 				setupLog.Error(err, "Reservation watcher failed")
 			}
 		}()
+	}
+
+	// Start Reservation Poller if using HTTP transport
+	if brokerTransport == "http" && brokerCommunicator != nil {
+		poller := transporthttp.NewReservationPoller(
+			brokerCommunicator,
+			clusterID,
+			30*time.Second, // Poll every 30 seconds
+			mgr.GetClient(),
+			instructionNamespace,
+		)
+		go func() {
+			if err := poller.Start(context.Background()); err != nil {
+				setupLog.Error(err, "Reservation poller failed")
+			}
+		}()
+		setupLog.Info("HTTP reservation poller started", "interval", "30s")
 	}
 	// +kubebuilder:scaffold:builder
 
@@ -350,5 +432,31 @@ func defaultResourceMetrics() rearv1alpha1.ResourceMetrics {
 		Allocatable: zeroQuantities,
 		Allocated:   zeroQuantities,
 		Available:   zeroQuantities,
+	}
+}
+
+// NewCommunicator creates a BrokerCommunicator based on transport type
+func NewCommunicator(
+	transportType string,
+	brokerURL string,
+	brokerKubeconfig string,
+	certPath string,
+	clusterID string,
+) (transport.BrokerCommunicator, error) {
+	switch transportType {
+	case "http":
+		if brokerURL == "" {
+			return nil, fmt.Errorf("broker-url is required for HTTP transport")
+		}
+		if certPath == "" {
+			return nil, fmt.Errorf("broker-cert-path is required for HTTP transport")
+		}
+		return transporthttp.NewHTTPCommunicator(brokerURL, certPath, clusterID)
+
+	case "kubernetes":
+		return nil, fmt.Errorf("kubernetes transport not yet implemented (coming in future iteration)")
+
+	default:
+		return nil, fmt.Errorf("unknown transport type: %s (supported: http, kubernetes)", transportType)
 	}
 }

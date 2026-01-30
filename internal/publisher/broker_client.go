@@ -16,7 +16,21 @@ import (
 	rearv1alpha1 "github.com/mehdiazizian/liqo-resource-agent/api/v1alpha1"
 )
 
-// BrokerClient publishes advertisements to the broker cluster
+// ============================================================================
+// LEGACY KUBERNETES TRANSPORT
+// ============================================================================
+// This file implements the original Kubernetes CRD-based communication.
+// It is kept for backward compatibility and thesis comparison purposes.
+//
+// NEW CODE SHOULD USE: internal/transport/BrokerCommunicator interface
+// - For HTTP transport: transport/http/client.go
+// - For future transports: implement BrokerCommunicator interface
+//
+// This legacy implementation will be maintained but is not the recommended
+// approach for new deployments.
+// ============================================================================
+
+// BrokerClient publishes advertisements to the broker cluster (LEGACY)
 type BrokerClient struct {
 	Client    dynamic.Interface
 	ClusterID string

@@ -3,6 +3,8 @@
 # It should be run by config/default
 resources:
 - bases/rear.fluidos.eu_advertisements.yaml
+- bases/rear.fluidos.eu_providerinstructions.yaml
+- bases/rear.fluidos.eu_reservationinstructions.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

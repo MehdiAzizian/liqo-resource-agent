@@ -17,7 +17,21 @@ import (
 	rearv1alpha1 "github.com/mehdiazizian/liqo-resource-agent/api/v1alpha1"
 )
 
-// ReservationWatcher watches for reservations on the broker.
+// ============================================================================
+// LEGACY KUBERNETES TRANSPORT
+// ============================================================================
+// This file implements the original Kubernetes Watch-based notification system.
+// It is kept for backward compatibility and thesis comparison purposes.
+//
+// NEW CODE SHOULD USE: transport/http/poller.go
+// - For HTTP transport: polls broker REST API every 30 seconds
+// - For future transports: implement similar polling/push mechanism
+//
+// This legacy implementation will be maintained but is not the recommended
+// approach for new deployments.
+// ============================================================================
+
+// ReservationWatcher watches for reservations on the broker (LEGACY).
 type ReservationWatcher struct {
 	Client               dynamic.Interface
 	LocalClient          client.Client

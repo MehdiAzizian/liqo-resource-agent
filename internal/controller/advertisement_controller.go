@@ -33,17 +33,20 @@ import (
 	rearv1alpha1 "github.com/mehdiazizian/liqo-resource-agent/api/v1alpha1"
 	"github.com/mehdiazizian/liqo-resource-agent/internal/metrics"
 	"github.com/mehdiazizian/liqo-resource-agent/internal/publisher" // ← Add this line
+	"github.com/mehdiazizian/liqo-resource-agent/internal/transport"
+	"github.com/mehdiazizian/liqo-resource-agent/internal/transport/dto"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // AdvertisementReconciler reconciles an Advertisement object
 type AdvertisementReconciler struct {
 	client.Client
-	Scheme           *runtime.Scheme
-	MetricsCollector *metrics.Collector
-	BrokerClient     *publisher.BrokerClient
-	TargetKey        types.NamespacedName
-	RequeueInterval  time.Duration // Configurable requeue interval
+	Scheme             *runtime.Scheme
+	MetricsCollector   *metrics.Collector
+	BrokerClient       *publisher.BrokerClient      // Legacy Kubernetes transport
+	BrokerCommunicator transport.BrokerCommunicator // New transport abstraction
+	TargetKey          types.NamespacedName
+	RequeueInterval    time.Duration // Configurable requeue interval
 }
 
 // +kubebuilder:rbac:groups=rear.fluidos.eu,resources=advertisements,verbs=get;list;watch;create;update;patch;delete
@@ -118,13 +121,22 @@ func (r *AdvertisementReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// Update status to indicate successful publication
 	result, err := r.updateStatus(ctx, advertisement, "Active", true, "Advertisement updated successfully")
 
-	// Publish to broker if enabled
-	if r.BrokerClient != nil && r.BrokerClient.Enabled {
+	// Publish to broker using new transport abstraction
+	if r.BrokerCommunicator != nil {
+		advDTO := dto.ToAdvertisementDTO(advertisement)
+		if err := r.BrokerCommunicator.PublishAdvertisement(ctx, advDTO); err != nil {
+			logger.Error(err, fmt.Sprintf("❌ Failed to publish to broker (will retry)\n  └─ Cluster: %s", clusterID))
+			// Don't fail the reconciliation, just log the error
+		} else {
+			logger.Info(fmt.Sprintf("✅ Published to broker successfully (via transport abstraction)\n  └─ Cluster: %s", clusterID))
+		}
+	} else if r.BrokerClient != nil && r.BrokerClient.Enabled {
+		// Legacy Kubernetes transport fallback
 		if err := r.BrokerClient.PublishAdvertisement(ctx, advertisement); err != nil {
 			logger.Error(err, fmt.Sprintf("❌ Failed to publish to broker (will retry)\n  └─ Cluster: %s", clusterID))
 			// Don't fail the reconciliation, just log the error
 		} else {
-			logger.Info(fmt.Sprintf("✅ Published to broker successfully\n  └─ Cluster: %s", clusterID))
+			logger.Info(fmt.Sprintf("✅ Published to broker successfully (via legacy client)\n  └─ Cluster: %s", clusterID))
 		}
 	}
 
